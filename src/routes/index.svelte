@@ -46,6 +46,9 @@
 		}
 
 		loop() {
+			const xmax = this.context.canvas.clientWidth;
+			const ymax = this.context.canvas.clientHeight;
+
 			// get a Delaunay triangulation of our points
 			const delaunay = Delaunay.from(
 				this.fixedPoints,
@@ -79,8 +82,6 @@
 
 			// possibly spawn a new rover
 			if (Math.random() < 1 / (TARGET_FPS * this.roverIntervalSeconds)) {
-				const xmax = this.context.canvas.clientWidth;
-				const ymax = this.context.canvas.clientHeight;
 				// the rover is spawned by picking a location for it to
 				// pass through, picking the angle at which it will pass
 				// through the location, and then figuring out where to
@@ -107,26 +108,57 @@
 				// unless the line is perfectly vertical, sorting by x coord lets us pick the points at either edge
 				pointsOfInterest.sort((a, b) => a.x - b.x);
 				// randomly pick one extreme point to be the spawn and the other to be the despawn
-				let spawn, despawn;
+				let spawn: Vector2, despawn: Vector2;
+				console.debug('points of interest', pointsOfInterest);
 				if (Math.random() < 0.5) {
 					spawn = pointsOfInterest[0];
-					despawn = pointsOfInterest[-1];
+					despawn = pointsOfInterest[pointsOfInterest.length - 1];
 				} else {
+					spawn = pointsOfInterest[pointsOfInterest.length - 1];
 					despawn = pointsOfInterest[0];
-					spawn = pointsOfInterest[-1];
 				}
-                this.rovers.push(new Rover(location, spawn, despawn));
+				this.rovers.push(new Rover(new Vector2(spawn.x, spawn.y), spawn, despawn));
 			}
 
-            // move each rover
-            this.rovers.forEach(rover => {
-                // total x and y distance the rover needs to travel
-                const dTotal = rover.despawn.minus(rover.spawn);
-                const angle = Math.atan(dTotal.y/dTotal.x);
-                // distance to travel this frame
-                const distanceThisFrame = rover.speed / TARGET_FPS;
-                const d = new Vector2(rover.speed / TARGET_FPS * Math.cos(angle), )
-            });
+			// move each rover
+			this.rovers.forEach((rover) => {
+				// total x and y distance the rover needs to travel
+				const dTotal = rover.despawn.minus(rover.spawn);
+				const angle = Math.atan(dTotal.y / dTotal.x);
+				// distance to travel this frame
+				const distanceThisFrame = rover.speed / TARGET_FPS;
+				const d = new Vector2(
+					distanceThisFrame * Math.cos(angle),
+					distanceThisFrame * Math.sin(angle)
+				);
+				// apply location transform
+				rover.location = rover.location.plus(d);
+				// if the rover has been onscreen and is now offscreen, delete it
+				if (!rover.hasEnteredScreen) {
+					if (
+						rover.location.x > 0 &&
+						rover.location.x < xmax &&
+						rover.location.y > 0 &&
+						rover.location.y < ymax
+					) {
+						rover.hasEnteredScreen = true;
+					}
+				} else if (
+					rover.location.x < 0 - CLIP_DISTANCE ||
+					rover.location.x > xmax + CLIP_DISTANCE ||
+					rover.location.y < 0 - CLIP_DISTANCE ||
+					rover.location.y > ymax + CLIP_DISTANCE
+				) {
+					this.rovers.splice(this.rovers.indexOf(rover), 1);
+				}
+			});
+
+			// render rovers
+			// todo replace
+			this.rovers.forEach((rover) => {
+				this.context.fillStyle = rover.color.toString();
+				this.context.fillRect(rover.location.x, rover.location.y, 25, 25);
+			});
 
 			// sleep
 			setTimeout(() => {
@@ -152,14 +184,22 @@
 	class Rover extends Point {
 		spawn: Vector2;
 		despawn: Vector2;
-        speed: number;
+		speed: number;
+		hasEnteredScreen = false;
 
-        constructor(location: Vector2, spawn: Vector2, despawn: Vector2, speed: number = 100, color: RGB = null) {
-            super(location, color);
-            this.spawn = spawn;
-            this.despawn = despawn;
-            this.speed = speed;
-        }
+		constructor(
+			location: Vector2,
+			spawn: Vector2,
+			despawn: Vector2,
+			speed: number = 100,
+			color: RGB = null
+		) {
+			super(location, color);
+			this.spawn = spawn;
+			this.despawn = despawn;
+			this.speed = speed;
+			console.debug(`New rover heading from ${this.spawn} to ${this.despawn}`);
+		}
 	}
 
 	type Polygon = [x: number, y: number][];
@@ -177,9 +217,13 @@
 			return `(${this.x}, ${this.y})`;
 		}
 
-        minus(other: Vector2): Vector2 {
-            return new Vector2(this.x - other.x, this.y - other.y);
-        }
+		minus(other: Vector2): Vector2 {
+			return new Vector2(this.x - other.x, this.y - other.y);
+		}
+
+		plus(other: Vector2): Vector2 {
+			return new Vector2(this.x + other.x, this.y + other.y);
+		}
 	}
 
 	class RGB {
