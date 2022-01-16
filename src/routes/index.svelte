@@ -1,25 +1,32 @@
 <script type="text/typescript">
 	import { Delaunay } from 'd3-delaunay';
 	import { onMount } from 'svelte';
-	import { xlink_attr } from 'svelte/internal';
+	import {hsv} from 'd3-hsv';
+	import * as d3 from 'd3-color';
 
 	// the animation will aim to run at this framerate
-	const TARGET_FPS = 60;
+	const TARGET_FPS = 30;
 
 	// if the animation slows below CUTOFF_FPS for more than
 	// CUTOFF_MIN_FRAMES frames, the animation will stop
-	const CUTOFF_FPS = 10;
+	const CUTOFF_FPS = 25;
 	const CUTOFF_MIN_FRAMES = 10;
 
 	// rovers will appear and disappear this many pixels past the edge of the canvas
-	const CLIP_DISTANCE = 10;
+	const CLIP_DISTANCE = 100;
+
+	// after MAX_ROVERS is exceeded, the first rover will be removed
+	const MAX_ROVERS = 10;
 
 	class GameBoard {
 		fixedPoints: Point[];
 		rovers: Rover[];
 		context: CanvasRenderingContext2D;
-		colors: RGB[];
 		roverIntervalSeconds: number;
+		previousFrameTimestampMs: number;
+		cutoffFramerate: number;
+		cutoffMinFrames: number;
+		numFramesBelowCutoff = 0;
 		stopped = false;
 
 		constructor(
@@ -31,53 +38,54 @@
 		) {
 			this.context = context;
 			this.rovers = [];
-			this.colors = [];
+			this.cutoffFramerate = cutoffFramerate;
+			this.cutoffMinFrames = cutoffMinFrames;
 			this.roverIntervalSeconds = roverIntervalSeconds;
+			this.previousFrameTimestampMs = Date.now();
 
 			// initialize stationary points
 			this.fixedPoints = [];
 			for (let i = 0; i < numFixedPoints; i++) {
 				const x = Math.random() * context.canvas.clientWidth;
 				const y = Math.random() * context.canvas.clientHeight;
-				const color = RGB.random();
+				const color = RGB.randomDark();
 				this.fixedPoints.push(new Point(new Vector2(x, y), color));
-				this.colors.push(color);
 			}
 		}
 
 		loop() {
+			// board bounds
 			const xmax = this.context.canvas.clientWidth;
 			const ymax = this.context.canvas.clientHeight;
+			// calculate fps
+			const currentFrameTimestampMs = Date.now();
+			const timeElapsedMs = currentFrameTimestampMs - this.previousFrameTimestampMs;
+			this.previousFrameTimestampMs = currentFrameTimestampMs;
+			const fps = 1000 / timeElapsedMs;
+			// warn if fps is below cutoff threshold
+			if (fps < this.cutoffFramerate) {
+				console.warn(`fps is ${fps}, below threshold of ${this.cutoffFramerate}`);
+			}
+			// if fps is too low for too many frames, stop the animation
+			if (fps > this.cutoffFramerate) {
+				this.numFramesBelowCutoff = 0;
+			} else {
+				this.numFramesBelowCutoff++;
+			}
+			if (this.numFramesBelowCutoff > this.cutoffMinFrames) {
+				this.stopped = true;
+			}
+			if (this.stopped) {
+				console.debug(
+					`Ran under ${this.cutoffFramerate} fps for ${this.cutoffMinFrames} frames, stopping animation`
+				);
+				return;
+			}
 
-			// get a Delaunay triangulation of our points
-			const delaunay = Delaunay.from(
-				this.fixedPoints,
-				(point) => point.location.x,
-				(point) => point.location.y
-			);
-
-			// get the voronoi diagram, with the bounds set to the edges of the canvas
-			const voronoi = delaunay.voronoi([
-				0,
-				0,
-				this.context.canvas.clientWidth,
-				this.context.canvas.clientHeight
-			]);
-
-			// render each cell
-			for (let i = 0; i < this.colors.length; i++) {
-				this.context.fillStyle = this.colors[i].toString();
-				//voronoi.renderCell(i, this.context);
-				this.context.beginPath();
-				voronoi.cellPolygon(i).forEach((vertex: [x: number, y: number], index) => {
-					if (index == 0) {
-						this.context.moveTo(vertex[0], vertex[1]);
-					} else {
-						this.context.lineTo(vertex[0], vertex[1]);
-					}
-				});
-				this.context.closePath();
-				this.context.fill();
+			// prune excess rovers
+			if (this.rovers.length > MAX_ROVERS) {
+				this.rovers.splice(0, 1);
+				console.debug("Too many rovers, removing the oldest one");
 			}
 
 			// possibly spawn a new rover
@@ -109,7 +117,6 @@
 				pointsOfInterest.sort((a, b) => a.x - b.x);
 				// randomly pick one extreme point to be the spawn and the other to be the despawn
 				let spawn: Vector2, despawn: Vector2;
-				console.debug('points of interest', pointsOfInterest);
 				if (Math.random() < 0.5) {
 					spawn = pointsOfInterest[0];
 					despawn = pointsOfInterest[pointsOfInterest.length - 1];
@@ -117,7 +124,21 @@
 					spawn = pointsOfInterest[pointsOfInterest.length - 1];
 					despawn = pointsOfInterest[0];
 				}
-				this.rovers.push(new Rover(new Vector2(spawn.x, spawn.y), spawn, despawn));
+				// if the spawn is beyond the clip distance, move it inward
+				spawn.x = Math.max(spawn.x, 0 - CLIP_DISTANCE);
+				spawn.x = Math.min(spawn.x, xmax + CLIP_DISTANCE);
+				spawn.y = Math.max(spawn.y, 0 - CLIP_DISTANCE);
+				spawn.y = Math.min(spawn.y, ymax + CLIP_DISTANCE);
+				// spawn the rover
+				this.rovers.push(
+					new Rover(
+						new Vector2(spawn.x, spawn.y),
+						spawn,
+						despawn,
+						Math.random() * 50 + 50,
+						RGB.randomBright()
+					)
+				);
 			}
 
 			// move each rover
@@ -133,17 +154,8 @@
 				);
 				// apply location transform
 				rover.location = rover.location.plus(d);
-				// if the rover has been onscreen and is now offscreen, delete it
-				if (!rover.hasEnteredScreen) {
-					if (
-						rover.location.x > 0 &&
-						rover.location.x < xmax &&
-						rover.location.y > 0 &&
-						rover.location.y < ymax
-					) {
-						rover.hasEnteredScreen = true;
-					}
-				} else if (
+				// if the rover is beyond the clip distance, delete it
+				if (
 					rover.location.x < 0 - CLIP_DISTANCE ||
 					rover.location.x > xmax + CLIP_DISTANCE ||
 					rover.location.y < 0 - CLIP_DISTANCE ||
@@ -153,12 +165,45 @@
 				}
 			});
 
-			// render rovers
-			// todo replace
-			this.rovers.forEach((rover) => {
-				this.context.fillStyle = rover.color.toString();
-				this.context.fillRect(rover.location.x, rover.location.y, 25, 25);
-			});
+			// render rovers and cells
+			// concat fixed point colors and rover colors
+			const colors: d3.Color[] = this.fixedPoints
+				.map((point) => point.color)
+				.concat(this.rovers.map((rover) => rover.color));
+			// concat fixed point and rover locations
+			const locations: Vector2[] = this.fixedPoints
+				.map((point) => point.location)
+				.concat(this.rovers.map((rover) => rover.location));
+			// get a Delaunay triangulation of our points
+			const delaunay = Delaunay.from(
+				locations,
+				(point) => point.x,
+				(point) => point.y
+			);
+			// get the voronoi diagram, with the bounds set to the edges of the canvas
+			const voronoi = delaunay.voronoi([
+				0 - CLIP_DISTANCE,
+				0 - CLIP_DISTANCE,
+				xmax + CLIP_DISTANCE,
+				ymax + CLIP_DISTANCE
+			]);
+			// render each cell
+			for (let i = 0; i < colors.length; i++) {
+				this.context.fillStyle = colors[i].toString();
+				const polygon = voronoi.cellPolygon(i);
+				if (polygon) {
+					this.context.beginPath();
+					polygon.forEach((vertex: [x: number, y: number], index) => {
+						if (index == 0) {
+							this.context.moveTo(vertex[0], vertex[1]);
+						} else {
+							this.context.lineTo(vertex[0], vertex[1]);
+						}
+					});
+					this.context.closePath();
+					this.context.fill();
+				}
+			}
 
 			// sleep
 			setTimeout(() => {
@@ -169,9 +214,9 @@
 
 	class Point {
 		location: Vector2;
-		color: RGB;
+		color: d3.Color;
 
-		constructor(location: Vector2, color: RGB = null) {
+		constructor(location: Vector2, color: d3.Color = null) {
 			this.location = location;
 			this.color = color ? color : RGB.random();
 		}
@@ -185,20 +230,18 @@
 		spawn: Vector2;
 		despawn: Vector2;
 		speed: number;
-		hasEnteredScreen = false;
 
 		constructor(
 			location: Vector2,
 			spawn: Vector2,
 			despawn: Vector2,
 			speed: number = 100,
-			color: RGB = null
+			color: d3.Color = null
 		) {
 			super(location, color);
 			this.spawn = spawn;
 			this.despawn = despawn;
 			this.speed = speed;
-			console.debug(`New rover heading from ${this.spawn} to ${this.despawn}`);
 		}
 	}
 
@@ -243,8 +286,26 @@
 			this.b = b;
 		}
 
-		static random(): RGB {
-			return new RGB(Math.random(), Math.random(), Math.random());
+		static random(): d3.Color {
+			const color = d3.color(`rgb(${Math.random()}, ${Math.random()}, ${Math.random()})`);
+			console.debug("color", color);
+			return color;
+		}
+
+		static randomDark(): d3.Color {
+			const h = Math.random() * 90;
+			const s = Math.random() * 0.2 + 0.2;
+			const v = Math.random() * 0.2;
+			const color = hsv(h, s, v).rgb();
+			return color;
+		}
+
+		static randomBright(): d3.Color {
+			const h = Math.random() * 90 + 90;
+			const s = Math.random() * 0.2 + 0.8;
+			const v = Math.random() * 0.2 + 0.8;
+			const color = hsv(h, s, v).rgb();
+			return color;
 		}
 
 		/**
@@ -258,9 +319,8 @@
 	function init() {
 		const canvas = document.getElementById('voronoiRoverCanvas') as HTMLCanvasElement;
 		const context = canvas.getContext('2d');
-		const board = new GameBoard(context, 30);
+		const board = new GameBoard(context, 30, 1);
 		board.loop();
-		console.debug('Rover started');
 	}
 
 	onMount(() => {
