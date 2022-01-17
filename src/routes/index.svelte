@@ -3,6 +3,7 @@
 	import { onMount } from 'svelte';
 	import { hsv } from 'd3-hsv';
 	import * as d3 from 'd3-color';
+	import { mat4 } from 'gl-matrix';
 
 	// the animation will aim to run at this framerate
 	const TARGET_FPS = 30;
@@ -18,6 +19,29 @@
 	const ROVER_MIN_SPEED = 100;
 	const ROVER_MAX_SPEED = 1000;
 
+	const vertexShaderSource = `
+		attribute vec4 aVertexPosition;
+		attribute vec4 aVertexColor;
+
+		uniform mat4 uModelViewMatrix;
+		uniform mat4 uProjectionMatrix;
+
+		varying lowp vec4 vColor;
+
+		void main() {
+			gl_Position = uProjectionMatrix * uModelViewMatrix * aVertexPosition;
+			vColor = aVertexColor;
+		}
+	`;
+
+	const fragmentShaderSource = `
+		varying lowp vec4 vColor;
+
+		void main() {
+			gl_FragColor = vColor;
+		}
+	`;
+
 	function randomRange(min: number, max: number): number {
 		return Math.random() * (max - min) + min;
 	}
@@ -25,7 +49,7 @@
 	class GameBoard {
 		fixedPoints: Point[] = [];
 		rovers: Rover[] = [];
-		context: CanvasRenderingContext2D;
+		context: WebGLRenderingContext;
 		numRovers: number;
 		previousFrameTimestampMs: number;
 		cutoffFramerate: number;
@@ -36,9 +60,15 @@
 		delaunayInput: Float64Array;
 		numFramesBelowCutoff = 0;
 		stopped = false;
+		programInfo: {
+			program: WebGLProgram;
+			attribLocations: { vertexPosition: any, vertexColor: any };
+			uniformLocations: { projectionMatrix: any; modelViewMatrix: any };
+			buffers: { position: WebGLBuffer, color: WebGLBuffer };
+		};
 
 		constructor(
-			context: CanvasRenderingContext2D,
+			context: WebGLRenderingContext,
 			numFixedPoints: number = 10,
 			numRovers: number = 5,
 			cutoffFramerate: number = CUTOFF_FPS,
@@ -97,6 +127,117 @@
 				this.xmax + CLIP_DISTANCE,
 				this.ymax + CLIP_DISTANCE
 			]);
+
+			// initialize shaders
+			const vertexShader = context.createShader(context.VERTEX_SHADER);
+			context.shaderSource(vertexShader, vertexShaderSource);
+			context.compileShader(vertexShader);
+			if (!context.getShaderParameter(vertexShader, context.COMPILE_STATUS)) {
+				console.error('Failed to compile vertex shader');
+				console.error(context.getShaderInfoLog(vertexShader));
+			}
+			const fragmentShader = context.createShader(context.FRAGMENT_SHADER);
+			context.shaderSource(fragmentShader, fragmentShaderSource);
+			context.compileShader(fragmentShader);
+			if (!context.getShaderParameter(fragmentShader, context.COMPILE_STATUS)) {
+				console.error('Failed to compile fragment shader');
+				console.error(context.getShaderInfoLog(fragmentShader));
+			}
+
+			// create shader program
+			const shaderProgram = context.createProgram();
+			context.attachShader(shaderProgram, vertexShader);
+			context.attachShader(shaderProgram, fragmentShader);
+			context.linkProgram(shaderProgram);
+			if (!context.getProgramParameter(shaderProgram, context.LINK_STATUS)) {
+				console.error('Unable to initialize shader program');
+				console.error(context.getProgramInfoLog(shaderProgram));
+			}
+
+			this.programInfo = {
+				program: shaderProgram,
+				attribLocations: {
+					vertexPosition: context.getAttribLocation(shaderProgram, 'aVertexPosition'),
+					vertexColor: context.getAttribLocation(shaderProgram, 'aVertexColor'),
+				},
+				uniformLocations: {
+					projectionMatrix: context.getUniformLocation(shaderProgram, 'uProjectionMatrix'),
+					modelViewMatrix: context.getUniformLocation(shaderProgram, 'uModelViewMatrix')
+				},
+				buffers: this.initBuffers()
+			};
+
+			// set clear colour to be black, and clear everything on clear()
+			context.clearColor(0, 0, 0, 1);
+			context.clearDepth(1);
+
+			// enable depth testing and make near things obscur far things
+			context.enable(context.DEPTH_TEST);
+			context.depthFunc(context.LEQUAL);
+			// create camera perspective matrix
+			const fieldOfView = Math.PI / 4; // 45°
+			const aspectRatio = this.xmax / this.ymax;
+			const clipNear = 0.1;
+			const clipFar = 100;
+			const projectionMatrix = mat4.create();
+			mat4.perspective(projectionMatrix, fieldOfView, aspectRatio, clipNear, clipFar);
+
+			// create a matrix to store the current drawing position
+			const modelViewMatrix = mat4.create();
+			mat4.translate(modelViewMatrix, modelViewMatrix, [-0.0, 0.0, -6.0]);
+
+			// tell webgl how to pull positions from positionBuffer into the vertexPosition attribute
+			{
+				const numComponents = 2; // grab 2 values every iteration
+				const type = context.FLOAT; // datatype is 32-bit float
+				const normalize = false;
+				const stride = 0; // not sure what this is for
+				const offset = 0;
+				context.bindBuffer(context.ARRAY_BUFFER, this.programInfo.buffers.position);
+				context.vertexAttribPointer(
+					this.programInfo.attribLocations.vertexPosition,
+					numComponents,
+					type,
+					normalize,
+					stride,
+					offset
+				);
+				context.enableVertexAttribArray(this.programInfo.attribLocations.vertexPosition);
+			}
+
+			// tell webgl how to pull colors from colorBuffer into the vertexColor attribute
+			{
+				const numComponents = 4; // rgba
+				const type = context.FLOAT;
+				const normalize = false;
+				const stride = 0;
+				const offset = 0;
+				context.bindBuffer(context.ARRAY_BUFFER, this.programInfo.buffers.color);
+				context.vertexAttribPointer(
+					this.programInfo.attribLocations.vertexColor,
+					numComponents,
+					type,
+					normalize,
+					stride,
+					offset
+				);
+				context.enableVertexAttribArray(this.programInfo.attribLocations.vertexColor);
+			}
+
+			// select drawing program
+			context.useProgram(this.programInfo.program);
+
+			// set shader uniforms (static each frame)
+			context.uniformMatrix4fv(
+				this.programInfo.uniformLocations.projectionMatrix,
+				false,
+				projectionMatrix
+			);
+			context.uniformMatrix4fv(
+				this.programInfo.uniformLocations.modelViewMatrix,
+				false,
+				modelViewMatrix
+			);
 		}
 
 		/**
@@ -109,6 +250,46 @@
 			} else {
 				return this.rovers[index - this.fixedPoints.length].color;
 			}
+		}
+
+		initBuffers(): { position: WebGLBuffer; color: WebGLBuffer } {
+			const context = this.context;
+
+			// buffer for vertex positions
+			const positionBuffer = context.createBuffer();
+
+			// bind the buffer as the one to apply all operations to
+			context.bindBuffer(context.ARRAY_BUFFER, positionBuffer);
+
+			// fill the buffer with the vertices of a square
+			const positions = [1.0, 1.0, -1.0, 1.0, 1.0, -1.0, -1.0, -1.0];
+			context.bufferData(context.ARRAY_BUFFER, new Float32Array(positions), context.STATIC_DRAW);
+
+			const colors = [
+				1.0,
+				1.0,
+				1.0,
+				1.0, // white
+				1.0,
+				0.0,
+				0.0,
+				1.0, // red
+				0.0,
+				1.0,
+				0.0,
+				1.0, // green
+				0.0,
+				0.0,
+				1.0,
+				1.0 // blue
+			];
+
+			// buffer for vertex colors
+			const colorBuffer = context.createBuffer();
+			context.bindBuffer(context.ARRAY_BUFFER, colorBuffer);
+			context.bufferData(context.ARRAY_BUFFER, new Float32Array(colors), context.STATIC_DRAW);
+
+			return { position: positionBuffer, color: colorBuffer };
 		}
 
 		loop() {
@@ -219,25 +400,40 @@
 			// update the voronoi diagram
 			this.voronoi.update();
 			// render each cell
-			Array.from(this.voronoi.cellPolygons()).forEach((polygon: [number, number][], index: number) => {
-				if (polygon) {
-					this.context.fillStyle = this.getColor(index).toString();
-					this.context.beginPath();
-					polygon.forEach((vertex: [number, number], index) => {
-						if (index == 0) {
-							this.context.moveTo(vertex[0], vertex[1]);
-						} else {
-							this.context.lineTo(vertex[0], vertex[1]);
-						}
-					});
-					this.context.fill();
+			/*Array.from(this.voronoi.cellPolygons()).forEach(
+				(polygon: [number, number][], index: number) => {
+					if (polygon) {
+						this.context.fillStyle = this.getColor(index).toString();
+						this.context.beginPath();
+						polygon.forEach((vertex: [number, number], index) => {
+							if (index == 0) {
+								this.context.moveTo(vertex[0], vertex[1]);
+							} else {
+								this.context.lineTo(vertex[0], vertex[1]);
+							}
+						});
+						this.context.fill();
+					}
 				}
-			});
+			);*/
+			const context = this.context;
+			
+			// clear canvas
+			context.clear(context.COLOR_BUFFER_BIT | context.DEPTH_BUFFER_BIT);
+			
+
+			// draw
+			{
+				const offset = 0;
+				const vertexCount = 4;
+				context.drawArrays(context.TRIANGLE_STRIP, offset, vertexCount);
+				console.debug('Done drawing');
+			}
 
 			// sleep
-			setTimeout(() => {
+			/*setTimeout(() => {
 				this.loop();
-			}, 1000 / TARGET_FPS);
+			}, 1000 / TARGET_FPS);*/
 		}
 	}
 
@@ -347,7 +543,7 @@
 
 	function init() {
 		const canvas = document.getElementById('voronoiRoverCanvas') as HTMLCanvasElement;
-		const context = canvas.getContext('2d');
+		const context = canvas.getContext('webgl');
 		const board = new GameBoard(context, 30);
 		board.loop();
 	}
