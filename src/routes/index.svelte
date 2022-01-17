@@ -4,6 +4,7 @@
 	import { hsv } from 'd3-hsv';
 	import * as d3 from 'd3-color';
 	import { mat4 } from 'gl-matrix';
+	import { clear_loops } from 'svelte/internal';
 
 	// the animation will aim to run at this framerate
 	const TARGET_FPS = 10;
@@ -62,9 +63,9 @@
 		stopped = false;
 		programInfo: {
 			program: WebGLProgram;
-			attribLocations: { vertexPosition: any, vertexColor: any };
+			attribLocations: { vertexPosition: any; vertexColor: any };
 			uniformLocations: { projectionMatrix: any; modelViewMatrix: any };
-			buffers: { position: WebGLBuffer, color: WebGLBuffer };
+			buffers: { position: WebGLBuffer; color: WebGLBuffer };
 		};
 
 		constructor(
@@ -158,13 +159,13 @@
 				program: shaderProgram,
 				attribLocations: {
 					vertexPosition: context.getAttribLocation(shaderProgram, 'aVertexPosition'),
-					vertexColor: context.getAttribLocation(shaderProgram, 'aVertexColor'),
+					vertexColor: context.getAttribLocation(shaderProgram, 'aVertexColor')
 				},
 				uniformLocations: {
 					projectionMatrix: context.getUniformLocation(shaderProgram, 'uProjectionMatrix'),
 					modelViewMatrix: context.getUniformLocation(shaderProgram, 'uModelViewMatrix')
 				},
-				buffers: null,
+				buffers: null
 			};
 			this.programInfo.buffers = this.initBuffers();
 
@@ -220,51 +221,45 @@
 		 * @param vertex
 		 */
 		scale(vertex: [number, number]): [number, number] {
-			const x = vertex[0] / this.xmax * 2 - 1;
-			const y = vertex[1] / this.ymax * 2 - 1;
+			const x = (vertex[0] / this.xmax) * 2 - 1;
+			const y = (vertex[1] / this.ymax) * 2 - 1;
 			return [x, y];
 		}
 
-		initBuffers(voronoiCells: (Polygon & { index: number; })[] = []): { position: WebGLBuffer; color: WebGLBuffer } {
+		initBuffers(voronoiCells: (Polygon & { index: number })[] = []): {
+			position: WebGLBuffer;
+			color: WebGLBuffer;
+		} {
 			const context = this.context;
-			// triangles and their corresponding colors
-			const triangles: number[] = []; // [x0 y0 x1 y1 x2 y2 x0 y0 x1 y1 x2 y2 ...]
-			const colors: number[] = []; // r g b a r g b a r g b a
-			// turn each voronoi cell into triangles
+			// vertices and their corresponding colors
+			const vertices: number[] = []; // x y x y x y x y
+			const colors: number[] = []; // r g b a r g b a r g b a r g b a
 			voronoiCells.forEach((cell, index) => {
 				const color = this.getColor(index).rgb();
-				// get the geometric centre of the cell
-				let centre: [number, number] = [0, 0];
-				cell.forEach(vertex => {
-					centre[0] += vertex[0];
-					centre[1] += vertex[1];
-				});
-				centre[0] /= cell.length;
-				centre[1] /= cell.length;
-				centre = this.scale(centre);
-				// turn every pair of vertices in the cell + the centre into a triangle
-				for (let i = 0; i < cell.length - 1; i++) {
-					const current = this.scale(cell[i]);
-					const next = this.scale(cell[i+1]);
-					triangles.push(current[0]);
-					triangles.push(current[1]);
-					triangles.push(next[0]);
-					triangles.push(next[1]);
-					triangles.push(centre[0]);
-					triangles.push(centre[1]);
-					for (let i = 0; i < 3; i++) {
-						colors.push(color.r/255);
-						colors.push(color.g/255);
-						colors.push(color.b/255);
+				const r = color.r / 255;
+				const g = color.g / 255;
+				const b = color.b / 255;
+				// geometric centre of the cell, for TRIANGLE_FAN
+				/*let centre: [number, number] = [0, 0];
+				for (let i = 0; i < cell.length; i++) {
+
+				}*/
+				cell.forEach((vertex, index) => {
+					if (index > 0) {
+						vertices.push(this.scale(vertex)[0]);
+						vertices.push(this.scale(vertex)[1]);
+						colors.push(r);
+						colors.push(g);
+						colors.push(b);
 						colors.push(1);
 					}
-				}
+				});
 			});
 
-			// init triangle buffer
+			// init vertex buffer
 			const positionBuffer = context.createBuffer();
 			context.bindBuffer(context.ARRAY_BUFFER, positionBuffer);
-			context.bufferData(context.ARRAY_BUFFER, new Float32Array(triangles), context.STATIC_DRAW);
+			context.bufferData(context.ARRAY_BUFFER, new Float32Array(vertices), context.STATIC_DRAW);
 
 			// init color buffer
 			const colorBuffer = context.createBuffer();
@@ -422,18 +417,22 @@
 			const context = this.context;
 
 			// refresh buffers
-			this.programInfo.buffers = this.initBuffers(Array.from(this.voronoi.cellPolygons()));
-			
+			const cellPolygons = Array.from(this.voronoi.cellPolygons());
+			this.programInfo.buffers = this.initBuffers(cellPolygons);
+
 			// clear canvas
 			//context.clear(context.COLOR_BUFFER_BIT | context.DEPTH_BUFFER_BIT);
-			
-			// draw
-			{
-				const offset = 0;
-				context.bindBuffer(context.ARRAY_BUFFER, this.programInfo.buffers.position);
-				const vertexCount = context.getBufferParameter(context.ARRAY_BUFFER, context.BUFFER_SIZE) / 2;
-				context.drawArrays(context.TRIANGLES, offset, vertexCount);
-			}
+
+			// draw - since each polygon has a different number of vertices,
+			// we need to iterate over them and make a separate draw call for each
+			context.bindBuffer(context.ARRAY_BUFFER, this.programInfo.buffers.position);
+			let offset = 0;
+			cellPolygons.forEach((cell) => {
+				//const vertexCount = context.getBufferParameter(context.ARRAY_BUFFER, context.BUFFER_SIZE) / 2;
+				const vertexCount = cell.length - 1; // first vertex is a duplicate of the last and is ignored
+				context.drawArrays(context.TRIANGLE_FAN, offset, vertexCount);
+				offset += vertexCount;
+			});
 
 			// sleep
 			setTimeout(() => {
