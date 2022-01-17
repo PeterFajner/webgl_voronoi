@@ -185,7 +185,7 @@
 
 			// create a matrix to store the current drawing position
 			const modelViewMatrix = mat4.create();
-			mat4.translate(modelViewMatrix, modelViewMatrix, [-0.0, 0.0, -6.0]);
+			mat4.translate(modelViewMatrix, modelViewMatrix, [-0.0, 0.0, -3.0]);
 
 			// select drawing program
 			context.useProgram(this.programInfo.program);
@@ -252,10 +252,12 @@
 					triangles.push(next[1]);
 					triangles.push(centre[0]);
 					triangles.push(centre[1]);
-					colors.push(color.r);
-					colors.push(color.g);
-					colors.push(color.b);
-					colors.push(1);
+					for (let i = 0; i < 3; i++) {
+						colors.push(color.r/255);
+						colors.push(color.g/255);
+						colors.push(color.b/255);
+						colors.push(1);
+					}
 				}
 			});
 
@@ -417,23 +419,6 @@
 			// render rovers and cells
 			// update the voronoi diagram
 			this.voronoi.update();
-			// render each cell
-			/*Array.from(this.voronoi.cellPolygons()).forEach(
-				(polygon: [number, number][], index: number) => {
-					if (polygon) {
-						this.context.fillStyle = this.getColor(index).toString();
-						this.context.beginPath();
-						polygon.forEach((vertex: [number, number], index) => {
-							if (index == 0) {
-								this.context.moveTo(vertex[0], vertex[1]);
-							} else {
-								this.context.lineTo(vertex[0], vertex[1]);
-							}
-						});
-						this.context.fill();
-					}
-				}
-			);*/
 			const context = this.context;
 
 			// refresh buffers
@@ -448,7 +433,6 @@
 				context.bindBuffer(context.ARRAY_BUFFER, this.programInfo.buffers.position);
 				const vertexCount = context.getBufferParameter(context.ARRAY_BUFFER, context.BUFFER_SIZE) / 2;
 				context.drawArrays(context.TRIANGLES, offset, vertexCount);
-				console.debug('Done drawing');
 			}
 
 			// sleep
