@@ -215,22 +215,20 @@
 			// update the voronoi diagram
 			this.voronoi.update();
 			// render each cell
-			for (let i = 0; i < colors.length; i++) {
-				this.context.fillStyle = colors[i].toString();
-				const polygon = this.voronoi.cellPolygon(i);
+			this.voronoi.cellPolygons.forEach((polygon, index) => {
 				if (polygon) {
+					this.context.fillStyle = colors[i].toString();
 					this.context.beginPath();
-					polygon.forEach((vertex: [x: number, y: number], index) => {
+					polygon.forEach((vertex: [number, number], index) => {
 						if (index == 0) {
 							this.context.moveTo(vertex[0], vertex[1]);
 						} else {
 							this.context.lineTo(vertex[0], vertex[1]);
 						}
 					});
-					this.context.closePath();
 					this.context.fill();
 				}
-			}
+			});
 
 			// sleep
 			setTimeout(() => {
