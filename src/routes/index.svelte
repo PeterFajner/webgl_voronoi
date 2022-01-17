@@ -239,11 +239,6 @@
 				const r = color.r / 255;
 				const g = color.g / 255;
 				const b = color.b / 255;
-				// geometric centre of the cell, for TRIANGLE_FAN
-				/*let centre: [number, number] = [0, 0];
-				for (let i = 0; i < cell.length; i++) {
-
-				}*/
 				cell.forEach((vertex, index) => {
 					if (index > 0) {
 						vertices.push(this.scale(vertex)[0]);
@@ -421,14 +416,12 @@
 			this.programInfo.buffers = this.initBuffers(cellPolygons);
 
 			// clear canvas
-			//context.clear(context.COLOR_BUFFER_BIT | context.DEPTH_BUFFER_BIT);
 
 			// draw - since each polygon has a different number of vertices,
 			// we need to iterate over them and make a separate draw call for each
 			context.bindBuffer(context.ARRAY_BUFFER, this.programInfo.buffers.position);
 			let offset = 0;
 			cellPolygons.forEach((cell) => {
-				//const vertexCount = context.getBufferParameter(context.ARRAY_BUFFER, context.BUFFER_SIZE) / 2;
 				const vertexCount = cell.length - 1; // first vertex is a duplicate of the last and is ignored
 				context.drawArrays(context.TRIANGLE_FAN, offset, vertexCount);
 				offset += vertexCount;
