@@ -392,7 +392,7 @@
 				const dTotal = rover.despawn.minus(rover.spawn);
 				const angle = Math.atan(dTotal.y / dTotal.x);
 				// distance to travel this frame
-				const distanceThisFrame = rover.speed / TARGET_FPS;
+				const distanceThisFrame = rover.speed * timeElapsedMs / 1000;
 				const d = new Vector2(
 					distanceThisFrame * Math.cos(angle),
 					distanceThisFrame * Math.sin(angle)
