@@ -15,9 +15,6 @@
 	// rovers will appear and disappear this many pixels past the edge of the canvas
 	const CLIP_DISTANCE = 100;
 
-	// after MAX_ROVERS is exceeded, the first rover will be removed
-	const MAX_ROVERS = 10;
-
 	const ROVER_MIN_SPEED = 100;
 	const ROVER_MAX_SPEED = 1000;
 
@@ -29,28 +26,28 @@
 		fixedPoints: Point[] = [];
 		rovers: Rover[] = [];
 		context: CanvasRenderingContext2D;
-		roverIntervalSeconds: number;
+		numRovers: number;
 		previousFrameTimestampMs: number;
 		cutoffFramerate: number;
 		cutoffMinFrames: number;
 		voronoi: Delaunay.voronoi;
 		xmax: number;
 		ymax: number;
-		delaunayInput: number[] = [];
+		delaunayInput: Float64Array;
 		numFramesBelowCutoff = 0;
 		stopped = false;
 
 		constructor(
 			context: CanvasRenderingContext2D,
 			numFixedPoints: number = 10,
-			roverIntervalSeconds: number = 2,
+			numRovers: number = 5,
 			cutoffFramerate: number = CUTOFF_FPS,
 			cutoffMinFrames: number = CUTOFF_MIN_FRAMES
 		) {
 			this.context = context;
 			this.cutoffFramerate = cutoffFramerate;
 			this.cutoffMinFrames = cutoffMinFrames;
-			this.roverIntervalSeconds = roverIntervalSeconds;
+			this.numRovers = numRovers;
 			this.previousFrameTimestampMs = Date.now();
 			this.xmax = this.context.canvas.clientWidth;
 			this.ymax = this.context.canvas.clientHeight;
@@ -63,12 +60,31 @@
 				const point = new Point(new Vector2(x, y), color);
 				this.fixedPoints.push(point);
 			}
-			
-			// update delaunay input in-place
-			this.delaunayInput.splice(0, this.delaunayInput.length);
-			this.fixedPoints.forEach(point => {
-				this.delaunayInput.push(point.location.x);
-				this.delaunayInput.push(point.location.y);
+
+			// initialize rovers
+			for (let i = 0; i < numRovers; i++) {
+				this.rovers.push(
+					new Rover(
+						new Vector2(0, 0),
+						null,
+						null,
+						randomRange(ROVER_MIN_SPEED, ROVER_MAX_SPEED),
+						RGB.randomBright()
+					)
+				);
+			}
+
+			// setup delaunay input vector
+			this.delaunayInput = new Float64Array(2 * (this.fixedPoints.length + this.rovers.length));
+			this.fixedPoints.forEach((point, index) => {
+				const offset = 2 * index;
+				this.delaunayInput[offset] = point.location.x;
+				this.delaunayInput[offset + 1] = point.location.y;
+			});
+			this.rovers.forEach((rover, index) => {
+				const offset = 2 * (index + this.fixedPoints.length);
+				this.delaunayInput[offset] = rover.location.x;
+				this.delaunayInput[offset] = rover.location.y;
 			});
 
 			// initialize delaunay representation
@@ -109,64 +125,66 @@
 				return;
 			}
 
-			// prune excess rovers
-			if (this.rovers.length > MAX_ROVERS) {
-				const rover = this.rovers[0];
-				this.rovers.splice(0, 1);
-				console.debug('Too many rovers, removing the oldest one');
-			}
+			// respawn rovers that have gone beyond the clip distance
+			this.rovers.forEach((rover) => {
+				if (
+					rover.location == null ||
+					rover.spawn == null ||
+					rover.despawn == null ||
+					rover.location.x < 0 - CLIP_DISTANCE ||
+					rover.location.x > this.xmax + CLIP_DISTANCE ||
+					rover.location.y < 0 - CLIP_DISTANCE ||
+					rover.location.y > this.ymax + CLIP_DISTANCE
+				) {
+					// set a new colour
+					rover.color = RGB.randomBright();
+					// set a new speed
+					rover.speed = randomRange(ROVER_MIN_SPEED, ROVER_MAX_SPEED);
+					// decide an on-screen location for the rover to pass through
+					const location = new Vector2(
+						Math.random() * this.context.canvas.clientWidth,
+						Math.random() * this.context.canvas.clientHeight
+					);
+					// decide an angle for the rover to pass through at
+					const angle = Math.random() * 2 * Math.PI;
+					// slope and y-intercept of the vector created by the angle passing through the location
+					// slope and y-intercept of the vector create by angle passing through location
+					const m = Math.sin(angle) / Math.cos(angle);
+					const b = location.y - m * location.x;
+					// possible offscreen spawn and despawn points along the vector are...
+					const xUp = -b / m; // y = 0
+					const xDown = (this.ymax - b) / m; // y = ymax
+					const yLeft = b; // x = 0
+					const yRight = m * this.xmax + b; // x = xmax
+					const pointsOfInterest = [
+						new Vector2(xUp, 0),
+						new Vector2(xDown, this.ymax),
+						new Vector2(0, yLeft),
+						new Vector2(this.xmax, yRight)
+					];
+					// unless the line is perfectly vertical, sorting by x coord lets us pick the points at either edge
+					pointsOfInterest.sort((a, b) => a.x - b.x);
+					// randomly pick one extreme point to be the spawn and the other to be the despawn
+					let spawn: Vector2, despawn: Vector2;
+					if (Math.random() < 0.5) {
+						spawn = pointsOfInterest[0];
+						despawn = pointsOfInterest[pointsOfInterest.length - 1];
+					} else {
+						spawn = pointsOfInterest[pointsOfInterest.length - 1];
+						despawn = pointsOfInterest[0];
+					}
+					// if the spawn is beyond the clip distance, move it inward
+					spawn.x = Math.max(spawn.x, 0 - CLIP_DISTANCE);
+					spawn.x = Math.min(spawn.x, this.xmax + CLIP_DISTANCE);
+					spawn.y = Math.max(spawn.y, 0 - CLIP_DISTANCE);
+					spawn.y = Math.min(spawn.y, this.ymax + CLIP_DISTANCE);
+					// respawn the rover
+					rover.location = new Vector2(spawn.x, spawn.y);
+					rover.spawn = spawn;
+					rover.despawn = despawn;
 
-			// possibly spawn a new rover
-			if (Math.random() < 1 / (TARGET_FPS * this.roverIntervalSeconds)) {
-				// the rover is spawned by picking a location for it to
-				// pass through, picking the angle at which it will pass
-				// through the location, and then figuring out where to
-				// spawn it
-				const location = new Vector2(
-					Math.random() * this.context.canvas.clientWidth,
-					Math.random() * this.context.canvas.clientHeight
-				);
-				const angle = Math.random() * 2 * Math.PI;
-				// slope and y-intercept of the vector create by angle passing through location
-				const m = Math.sin(angle) / Math.cos(angle);
-				const b = location.y - m * location.x;
-				// possible spawn and despawn points along the vector are...
-				const xUp = -b / m; // y = 0
-				const xDown = (this.ymax - b) / m; // y = ymax
-				const yLeft = b; // x = 0
-				const yRight = m * this.xmax + b; // x = xmax
-				const pointsOfInterest = [
-					new Vector2(xUp, 0),
-					new Vector2(xDown, this.ymax),
-					new Vector2(0, yLeft),
-					new Vector2(this.xmax, yRight)
-				];
-				// unless the line is perfectly vertical, sorting by x coord lets us pick the points at either edge
-				pointsOfInterest.sort((a, b) => a.x - b.x);
-				// randomly pick one extreme point to be the spawn and the other to be the despawn
-				let spawn: Vector2, despawn: Vector2;
-				if (Math.random() < 0.5) {
-					spawn = pointsOfInterest[0];
-					despawn = pointsOfInterest[pointsOfInterest.length - 1];
-				} else {
-					spawn = pointsOfInterest[pointsOfInterest.length - 1];
-					despawn = pointsOfInterest[0];
 				}
-				// if the spawn is beyond the clip distance, move it inward
-				spawn.x = Math.max(spawn.x, 0 - CLIP_DISTANCE);
-				spawn.x = Math.min(spawn.x, this.xmax + CLIP_DISTANCE);
-				spawn.y = Math.max(spawn.y, 0 - CLIP_DISTANCE);
-				spawn.y = Math.min(spawn.y, this.ymax + CLIP_DISTANCE);
-				// spawn the rover
-				const rover = new Rover(
-					new Vector2(spawn.x, spawn.y),
-					spawn,
-					despawn,
-					randomRange(ROVER_MIN_SPEED, ROVER_MAX_SPEED),
-					RGB.randomBright()
-				);
-				this.rovers.push(rover);
-			}
+			});
 
 			// move each rover
 			this.rovers.forEach((rover) => {
@@ -181,15 +199,6 @@
 				);
 				// apply location transform
 				rover.location = rover.location.plus(d);
-				// if the rover is beyond the clip distance, delete it
-				if (
-					rover.location.x < 0 - CLIP_DISTANCE ||
-					rover.location.x > this.xmax + CLIP_DISTANCE ||
-					rover.location.y < 0 - CLIP_DISTANCE ||
-					rover.location.y > this.ymax + CLIP_DISTANCE
-				) {
-					this.rovers.splice(this.rovers.indexOf(rover), 1);
-				}
 			});
 
 			// render rovers and cells
@@ -198,18 +207,13 @@
 				.map((point) => point.color)
 				.concat(this.rovers.map((rover) => rover.color));
 			// update delaunay input in-place
-			this.delaunayInput.splice(0, this.delaunayInput.length);
-			this.fixedPoints.forEach(point => {
-				this.delaunayInput.push(point.location.x);
-				this.delaunayInput.push(point.location.y);
+			this.rovers.forEach((rover, index) => {
+				const offset = 2 * (this.fixedPoints.length + index);
+				this.delaunayInput[offset] = rover.location.x;
+				this.delaunayInput[offset + 1] = rover.location.y;
 			});
-			this.rovers.forEach(rover => {
-				this.delaunayInput.push(rover.location.x);
-				this.delaunayInput.push(rover.location.y);
-			})
 			// update the voronoi diagram
 			this.voronoi.update();
-			console.debug("voronoi output", Array.from(this.voronoi.cellPolygons()).length);
 			// render each cell
 			for (let i = 0; i < colors.length; i++) {
 				this.context.fillStyle = colors[i].toString();
@@ -342,7 +346,7 @@
 	function init() {
 		const canvas = document.getElementById('voronoiRoverCanvas') as HTMLCanvasElement;
 		const context = canvas.getContext('2d');
-		const board = new GameBoard(context, 30, 1);
+		const board = new GameBoard(context, 30);
 		board.loop();
 	}
 
