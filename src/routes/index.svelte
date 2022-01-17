@@ -223,46 +223,24 @@
 		 * Scale a vertex from [0 0 xmax ymax] space to [-1 -1 1 1] space
 		 * @param vertex
 		 */
-		scale(vertex: [number, number]): [number, number] {
+		scale(vertex: Delaunay.Point): [number, number] {
 			const x = (vertex[0] / this.xmax) * 2 - 1;
 			const y = (vertex[1] / this.ymax) * 2 - 1;
 			return [x, y];
 		}
 
-		initBuffers(voronoiCells: (Polygon & { index: number })[] = []): {
-			position: WebGLBuffer;
-			color: WebGLBuffer;
-		} {
+		initBuffers(): { position: WebGLBuffer; color: WebGLBuffer } {
 			const context = this.context;
-			// vertices and their corresponding colors
-			const vertices: number[] = []; // x y x y x y x y
-			const colors: number[] = []; // r g b a r g b a r g b a r g b a
-			voronoiCells.forEach((cell, index) => {
-				const color = this.getColor(index).rgb();
-				const r = color.r / 255;
-				const g = color.g / 255;
-				const b = color.b / 255;
-				cell.forEach((vertex, index) => {
-					if (index > 0) {
-						vertices.push(this.scale(vertex)[0]);
-						vertices.push(this.scale(vertex)[1]);
-						colors.push(r);
-						colors.push(g);
-						colors.push(b);
-						colors.push(1);
-					}
-				});
-			});
 
 			// init vertex buffer
 			const positionBuffer = context.createBuffer();
 			context.bindBuffer(context.ARRAY_BUFFER, positionBuffer);
-			context.bufferData(context.ARRAY_BUFFER, new Float32Array(vertices), context.STATIC_DRAW);
+			context.bufferData(context.ARRAY_BUFFER, new Float32Array([]), context.STATIC_DRAW);
 
 			// init color buffer
 			const colorBuffer = context.createBuffer();
 			context.bindBuffer(context.ARRAY_BUFFER, colorBuffer);
-			context.bufferData(context.ARRAY_BUFFER, new Float32Array(colors), context.STATIC_DRAW);
+			context.bufferData(context.ARRAY_BUFFER, new Float32Array([]), context.STATIC_DRAW);
 
 			// tell webgl how to pull positions from positionBuffer into the vertexPosition attribute
 			{
@@ -303,6 +281,37 @@
 			}
 
 			return { position: positionBuffer, color: colorBuffer };
+		}
+
+		refreshBuffers(voronoiCells: (Delaunay.Polygon & { index: number })[]) {
+			const context = this.context;
+			// vertices and their corresponding colors
+			const vertices: number[] = []; // x y x y x y x y
+			const colors: number[] = []; // r g b a r g b a r g b a r g b a
+			voronoiCells.forEach((cell, index) => {
+				const color = this.getColor(index).rgb();
+				const r = color.r / 255;
+				const g = color.g / 255;
+				const b = color.b / 255;
+				cell.forEach((vertex, index) => {
+					if (index > 0) {
+						vertices.push(this.scale(vertex)[0]);
+						vertices.push(this.scale(vertex)[1]);
+						colors.push(r);
+						colors.push(g);
+						colors.push(b);
+						colors.push(1);
+					}
+				});
+			});
+
+			// fill vertex buffer
+			context.bindBuffer(context.ARRAY_BUFFER, this.programInfo.buffers.position);
+			context.bufferData(context.ARRAY_BUFFER, new Float32Array(vertices), context.STATIC_DRAW);
+
+			// fill color buffer
+			context.bindBuffer(context.ARRAY_BUFFER, this.programInfo.buffers.color);
+			context.bufferData(context.ARRAY_BUFFER, new Float32Array(colors), context.STATIC_DRAW);
 		}
 
 		loop() {
@@ -395,7 +404,7 @@
 				const dTotal = rover.despawn.minus(rover.spawn);
 				const angle = Math.atan(dTotal.y / dTotal.x);
 				// distance to travel this frame
-				const distanceThisFrame = rover.speed * timeElapsedMs / 1000;
+				const distanceThisFrame = (rover.speed * timeElapsedMs) / 1000;
 				const d = new Vector2(
 					distanceThisFrame * Math.cos(angle),
 					distanceThisFrame * Math.sin(angle)
@@ -416,7 +425,7 @@
 
 			// refresh buffers
 			const cellPolygons = Array.from(this.voronoi.cellPolygons());
-			this.programInfo.buffers = this.initBuffers(cellPolygons);
+			this.refreshBuffers(cellPolygons);
 
 			// clear canvas
 
