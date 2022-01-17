@@ -1,16 +1,16 @@
 <script type="text/typescript">
-	import { Delaunay } from 'd3-delaunay';
+	import { Delaunay, Voronoi } from 'd3-delaunay';
 	import { onMount } from 'svelte';
 	import { hsv } from 'd3-hsv';
 	import * as d3 from 'd3-color';
 	import { mat4 } from 'gl-matrix';
 
 	// the animation will aim to run at this framerate
-	const TARGET_FPS = 30;
+	const TARGET_FPS = 10;
 
 	// if the animation slows below CUTOFF_FPS for more than
 	// CUTOFF_MIN_FRAMES frames, the animation will stop
-	const CUTOFF_FPS = 25;
+	const CUTOFF_FPS = 1;
 	const CUTOFF_MIN_FRAMES = 10;
 
 	// rovers will appear and disappear this many pixels past the edge of the canvas
@@ -49,12 +49,12 @@
 	class GameBoard {
 		fixedPoints: Point[] = [];
 		rovers: Rover[] = [];
-		context: WebGLRenderingContext;
+		context: WebGL2RenderingContext;
 		numRovers: number;
 		previousFrameTimestampMs: number;
 		cutoffFramerate: number;
 		cutoffMinFrames: number;
-		voronoi: Delaunay.voronoi;
+		voronoi: Voronoi<Float32Array>;
 		xmax: number;
 		ymax: number;
 		delaunayInput: Float64Array;
@@ -68,7 +68,7 @@
 		};
 
 		constructor(
-			context: WebGLRenderingContext,
+			context: WebGL2RenderingContext,
 			numFixedPoints: number = 10,
 			numRovers: number = 5,
 			cutoffFramerate: number = CUTOFF_FPS,
@@ -164,8 +164,9 @@
 					projectionMatrix: context.getUniformLocation(shaderProgram, 'uProjectionMatrix'),
 					modelViewMatrix: context.getUniformLocation(shaderProgram, 'uModelViewMatrix')
 				},
-				buffers: this.initBuffers()
+				buffers: null,
 			};
+			this.programInfo.buffers = this.initBuffers();
 
 			// set clear colour to be black, and clear everything on clear()
 			context.clearColor(0, 0, 0, 1);
@@ -185,44 +186,6 @@
 			// create a matrix to store the current drawing position
 			const modelViewMatrix = mat4.create();
 			mat4.translate(modelViewMatrix, modelViewMatrix, [-0.0, 0.0, -6.0]);
-
-			// tell webgl how to pull positions from positionBuffer into the vertexPosition attribute
-			{
-				const numComponents = 2; // grab 2 values every iteration
-				const type = context.FLOAT; // datatype is 32-bit float
-				const normalize = false;
-				const stride = 0; // not sure what this is for
-				const offset = 0;
-				context.bindBuffer(context.ARRAY_BUFFER, this.programInfo.buffers.position);
-				context.vertexAttribPointer(
-					this.programInfo.attribLocations.vertexPosition,
-					numComponents,
-					type,
-					normalize,
-					stride,
-					offset
-				);
-				context.enableVertexAttribArray(this.programInfo.attribLocations.vertexPosition);
-			}
-
-			// tell webgl how to pull colors from colorBuffer into the vertexColor attribute
-			{
-				const numComponents = 4; // rgba
-				const type = context.FLOAT;
-				const normalize = false;
-				const stride = 0;
-				const offset = 0;
-				context.bindBuffer(context.ARRAY_BUFFER, this.programInfo.buffers.color);
-				context.vertexAttribPointer(
-					this.programInfo.attribLocations.vertexColor,
-					numComponents,
-					type,
-					normalize,
-					stride,
-					offset
-				);
-				context.enableVertexAttribArray(this.programInfo.attribLocations.vertexColor);
-			}
 
 			// select drawing program
 			context.useProgram(this.programInfo.program);
@@ -244,50 +207,105 @@
 		 * Get the color of the point at this.fixedPoints.concat(this.rovers)[index]
 		 * @param index
 		 */
-		getColor(index): d3.Color {
+		getColor(index): d3.RGBColor {
 			if (index < this.fixedPoints.length) {
-				return this.fixedPoints[index].color;
+				return this.fixedPoints[index].color.rgb();
 			} else {
-				return this.rovers[index - this.fixedPoints.length].color;
+				return this.rovers[index - this.fixedPoints.length].color.rgb();
 			}
 		}
 
-		initBuffers(): { position: WebGLBuffer; color: WebGLBuffer } {
+		/**
+		 * Scale a vertex from [0 0 xmax ymax] space to [-1 -1 1 1] space
+		 * @param vertex
+		 */
+		scale(vertex: [number, number]): [number, number] {
+			const x = vertex[0] / this.xmax * 2 - 1;
+			const y = vertex[1] / this.ymax * 2 - 1;
+			return [x, y];
+		}
+
+		initBuffers(voronoiCells: (Polygon & { index: number; })[] = []): { position: WebGLBuffer; color: WebGLBuffer } {
 			const context = this.context;
+			// triangles and their corresponding colors
+			const triangles: number[] = []; // [x0 y0 x1 y1 x2 y2 x0 y0 x1 y1 x2 y2 ...]
+			const colors: number[] = []; // r g b a r g b a r g b a
+			// turn each voronoi cell into triangles
+			voronoiCells.forEach((cell, index) => {
+				const color = this.getColor(index).rgb();
+				// get the geometric centre of the cell
+				let centre: [number, number] = [0, 0];
+				cell.forEach(vertex => {
+					centre[0] += vertex[0];
+					centre[1] += vertex[1];
+				});
+				centre[0] /= cell.length;
+				centre[1] /= cell.length;
+				centre = this.scale(centre);
+				// turn every pair of vertices in the cell + the centre into a triangle
+				for (let i = 0; i < cell.length - 1; i++) {
+					const current = this.scale(cell[i]);
+					const next = this.scale(cell[i+1]);
+					triangles.push(current[0]);
+					triangles.push(current[1]);
+					triangles.push(next[0]);
+					triangles.push(next[1]);
+					triangles.push(centre[0]);
+					triangles.push(centre[1]);
+					colors.push(color.r);
+					colors.push(color.g);
+					colors.push(color.b);
+					colors.push(1);
+				}
+			});
 
-			// buffer for vertex positions
+			// init triangle buffer
 			const positionBuffer = context.createBuffer();
-
-			// bind the buffer as the one to apply all operations to
 			context.bindBuffer(context.ARRAY_BUFFER, positionBuffer);
+			context.bufferData(context.ARRAY_BUFFER, new Float32Array(triangles), context.STATIC_DRAW);
 
-			// fill the buffer with the vertices of a square
-			const positions = [1.0, 1.0, -1.0, 1.0, 1.0, -1.0, -1.0, -1.0];
-			context.bufferData(context.ARRAY_BUFFER, new Float32Array(positions), context.STATIC_DRAW);
-
-			const colors = [
-				1.0,
-				1.0,
-				1.0,
-				1.0, // white
-				1.0,
-				0.0,
-				0.0,
-				1.0, // red
-				0.0,
-				1.0,
-				0.0,
-				1.0, // green
-				0.0,
-				0.0,
-				1.0,
-				1.0 // blue
-			];
-
-			// buffer for vertex colors
+			// init color buffer
 			const colorBuffer = context.createBuffer();
 			context.bindBuffer(context.ARRAY_BUFFER, colorBuffer);
 			context.bufferData(context.ARRAY_BUFFER, new Float32Array(colors), context.STATIC_DRAW);
+
+			// tell webgl how to pull positions from positionBuffer into the vertexPosition attribute
+			{
+				const numComponents = 2; // every iteration grab a vertex: xy
+				const type = context.FLOAT; // datatype is 32-bit float
+				const normalize = false;
+				const stride = 0; // not sure what this is for
+				const offset = 0;
+				context.bindBuffer(context.ARRAY_BUFFER, positionBuffer);
+				context.vertexAttribPointer(
+					this.programInfo.attribLocations.vertexPosition,
+					numComponents,
+					type,
+					normalize,
+					stride,
+					offset
+				);
+				context.enableVertexAttribArray(this.programInfo.attribLocations.vertexPosition);
+			}
+
+			// tell webgl how to pull colors from colorBuffer into the vertexColor attribute
+			{
+				const numComponents = 4; // rgba
+				const type = context.FLOAT;
+				const normalize = false;
+				const stride = 0;
+				const offset = 0;
+				context.bindBuffer(context.ARRAY_BUFFER, colorBuffer);
+				context.vertexAttribPointer(
+					this.programInfo.attribLocations.vertexColor,
+					numComponents,
+					type,
+					normalize,
+					stride,
+					offset
+				);
+				context.enableVertexAttribArray(this.programInfo.attribLocations.vertexColor);
+			}
 
 			return { position: positionBuffer, color: colorBuffer };
 		}
@@ -417,31 +435,34 @@
 				}
 			);*/
 			const context = this.context;
+
+			// refresh buffers
+			this.programInfo.buffers = this.initBuffers(Array.from(this.voronoi.cellPolygons()));
 			
 			// clear canvas
-			context.clear(context.COLOR_BUFFER_BIT | context.DEPTH_BUFFER_BIT);
+			//context.clear(context.COLOR_BUFFER_BIT | context.DEPTH_BUFFER_BIT);
 			
-
 			// draw
 			{
 				const offset = 0;
-				const vertexCount = 4;
-				context.drawArrays(context.TRIANGLE_STRIP, offset, vertexCount);
+				context.bindBuffer(context.ARRAY_BUFFER, this.programInfo.buffers.position);
+				const vertexCount = context.getBufferParameter(context.ARRAY_BUFFER, context.BUFFER_SIZE) / 2;
+				context.drawArrays(context.TRIANGLES, offset, vertexCount);
 				console.debug('Done drawing');
 			}
 
 			// sleep
-			/*setTimeout(() => {
+			setTimeout(() => {
 				this.loop();
-			}, 1000 / TARGET_FPS);*/
+			}, 1000 / TARGET_FPS);
 		}
 	}
 
 	class Point {
 		location: Vector2;
-		color: d3.Color;
+		color: d3.RGBColor;
 
-		constructor(location: Vector2, color: d3.Color = null) {
+		constructor(location: Vector2, color: d3.RGBColor = null) {
 			this.location = location;
 			this.color = color ? color : RGB.random();
 		}
@@ -461,7 +482,7 @@
 			spawn: Vector2,
 			despawn: Vector2,
 			speed: number = 100,
-			color: d3.Color = null
+			color: d3.RGBColor = null
 		) {
 			super(location, color);
 			this.spawn = spawn;
@@ -511,13 +532,13 @@
 			this.b = b;
 		}
 
-		static random(): d3.Color {
-			const color = d3.color(`rgb(${Math.random()}, ${Math.random()}, ${Math.random()})`);
+		static random(): d3.RGBColor {
+			const color = d3.rgb(`rgb(${Math.random()}, ${Math.random()}, ${Math.random()})`);
 			console.debug('color', color);
 			return color;
 		}
 
-		static randomDark(): d3.Color {
+		static randomDark(): d3.RGBColor {
 			const h = Math.random() * 90;
 			const s = Math.random() * 0.2 + 0.2;
 			const v = Math.random() * 0.2;
@@ -525,7 +546,7 @@
 			return color;
 		}
 
-		static randomBright(): d3.Color {
+		static randomBright(): d3.RGBColor {
 			const h = Math.random() * 90 + 90;
 			const s = Math.random() * 0.2 + 0.8;
 			const v = Math.random() * 0.2 + 0.8;
@@ -543,7 +564,7 @@
 
 	function init() {
 		const canvas = document.getElementById('voronoiRoverCanvas') as HTMLCanvasElement;
-		const context = canvas.getContext('webgl');
+		const context = canvas.getContext('webgl2');
 		const board = new GameBoard(context, 30);
 		board.loop();
 	}
