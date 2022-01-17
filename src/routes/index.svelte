@@ -7,11 +7,11 @@
 	import { clear_loops } from 'svelte/internal';
 
 	// the animation will aim to run at this framerate
-	const TARGET_FPS = 10;
+	const TARGET_FPS = 60;
 
 	// if the animation slows below CUTOFF_FPS for more than
 	// CUTOFF_MIN_FRAMES frames, the animation will stop
-	const CUTOFF_FPS = 1;
+	const CUTOFF_FPS = 45;
 	const CUTOFF_MIN_FRAMES = 10;
 
 	// rovers will appear and disappear this many pixels past the edge of the canvas
