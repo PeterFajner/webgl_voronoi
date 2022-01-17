@@ -83,6 +83,9 @@
 			this.xmax = this.context.canvas.clientWidth;
 			this.ymax = this.context.canvas.clientHeight;
 
+			// initialize canvas size
+			context.viewport(0, 0, context.canvas.width, context.canvas.height);
+
 			// initialize stationary points
 			for (let i = 0; i < numFixedPoints; i++) {
 				const x = Math.random() * context.canvas.clientWidth;
@@ -540,6 +543,8 @@
 
 	function init() {
 		const canvas = document.getElementById('voronoiRoverCanvas') as HTMLCanvasElement;
+		canvas.width = Math.max(window.innerWidth, window.innerHeight);
+		canvas.height = Math.max(window.innerWidth, window.innerHeight);
 		const context = canvas.getContext('webgl2');
 		const board = new GameBoard(context, 30);
 		board.loop();
