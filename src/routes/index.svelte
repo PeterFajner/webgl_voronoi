@@ -99,6 +99,18 @@
 			]);
 		}
 
+		/**
+		 * Get the color of the point at this.fixedPoints.concat(this.rovers)[index]
+		 * @param index
+		 */
+		getColor(index): d3.Color {
+			if (index < this.fixedPoints.length) {
+				return this.fixedPoints[index].color;
+			} else {
+				return this.rovers[index - this.fixedPoints.length].color;
+			}
+		}
+
 		loop() {
 			// calculate fps
 			const currentFrameTimestampMs = Date.now();
@@ -125,8 +137,8 @@
 				return;
 			}
 
-			// respawn rovers that have gone beyond the clip distance
-			this.rovers.forEach((rover) => {
+			this.rovers.forEach((rover, index) => {
+				// respawn rover if it has gone beyond the clip distance
 				if (
 					rover.location == null ||
 					rover.spawn == null ||
@@ -182,12 +194,9 @@
 					rover.location = new Vector2(spawn.x, spawn.y);
 					rover.spawn = spawn;
 					rover.despawn = despawn;
-
 				}
-			});
 
-			// move each rover
-			this.rovers.forEach((rover) => {
+				// move the rover along its path
 				// total x and y distance the rover needs to travel
 				const dTotal = rover.despawn.minus(rover.spawn);
 				const angle = Math.atan(dTotal.y / dTotal.x);
@@ -199,25 +208,20 @@
 				);
 				// apply location transform
 				rover.location = rover.location.plus(d);
-			});
 
-			// render rovers and cells
-			// concat fixed point colors and rover colors
-			const colors: d3.Color[] = this.fixedPoints
-				.map((point) => point.color)
-				.concat(this.rovers.map((rover) => rover.color));
-			// update delaunay input in-place
-			this.rovers.forEach((rover, index) => {
+				// update delaunay input in-place
 				const offset = 2 * (this.fixedPoints.length + index);
 				this.delaunayInput[offset] = rover.location.x;
 				this.delaunayInput[offset + 1] = rover.location.y;
 			});
+
+			// render rovers and cells
 			// update the voronoi diagram
 			this.voronoi.update();
 			// render each cell
-			this.voronoi.cellPolygons.forEach((polygon, index) => {
+			Array.from(this.voronoi.cellPolygons()).forEach((polygon: [number, number][], index: number) => {
 				if (polygon) {
-					this.context.fillStyle = colors[i].toString();
+					this.context.fillStyle = this.getColor(index).toString();
 					this.context.beginPath();
 					polygon.forEach((vertex: [number, number], index) => {
 						if (index == 0) {
