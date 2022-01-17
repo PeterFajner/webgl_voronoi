@@ -189,7 +189,7 @@
 
 			// create a matrix to store the current drawing position
 			const modelViewMatrix = mat4.create();
-			mat4.translate(modelViewMatrix, modelViewMatrix, [-0.0, 0.0, -3.0]);
+			mat4.translate(modelViewMatrix, modelViewMatrix, [-0.0, 0.0, -2.9]);
 
 			// select drawing program
 			context.useProgram(this.programInfo.program);
