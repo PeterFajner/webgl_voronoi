@@ -13,7 +13,7 @@
 	//
 	function main() {
 		const canvas: HTMLCanvasElement = document.querySelector('#glcanvas');
-		const gl = canvas.getContext('webgl');
+		const gl = canvas.getContext('webgl2');
 
 		// If we don't have a GL context, give up now
 
