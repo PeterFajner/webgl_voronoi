@@ -12,7 +12,7 @@
 
 	class Shaders {
 		static vertexShaderSource = `
-        precision mediump float;
+        precision highp float;
 
         attribute lowp vec4 aVertexPosition; // position in space (corners)
 
@@ -28,7 +28,7 @@
         `;
 
 		static fragmentShaderSource = `
-        precision mediump float;
+        precision highp float;
 
         varying vec2 vPixelPosition;
         uniform sampler2D uVertices; // x y x y x y
@@ -40,13 +40,12 @@
             float nearestVertexSqDist = -1.0;
             float sqDist;
             vec3 nearestVertexColor = vec3(0, 1, 0);
-            int i = 0;
             for (int i = 0; i < ${MAX_VERTICES}; i++) {
                 if (i >= uNumVertices) {
                     break;
                 }
-                vec2 vertexPosition = texture2D(uVertices, vec2(i, 0)).xy;
-                vec3 vertexColor = texture2D(uVertexColors, vec2(i, 0)).rgb;
+                vec2 vertexPosition = texture2D(uVertices, vec2(i, 0.5)).xy;
+                vec3 vertexColor = texture2D(uVertexColors, vec2(i, 0.5)).rgb;
                 vec2 distance = vertexPosition - vPixelPosition;
                 sqDist = pow(distance.x, 2.0) + pow(distance.y, 2.0);
                 if (nearestVertexSqDist < 0.0 || sqDist < nearestVertexSqDist) {
@@ -55,6 +54,24 @@
                 }
             }
 			gl_FragColor = vec4(nearestVertexColor, 1);
+
+            // testing
+            /*if (sqDist < 0.2) {
+                gl_FragColor = vec4(0, 0, 1, 1);
+            } else {
+                gl_FragColor = vec4(0, 1, 0, 1);
+            }*/
+            //gl_FragColor = vec4(0, vPixelPosition, 1);
+
+            /*vec2 vertexPosition = texture2D(uVertices, vec2(3, 0)).xy;
+            float threshold = 0.01;
+            if (abs(vPixelPosition.x - vertexPosition.x) < threshold && abs(vPixelPosition.y - vertexPosition.y) < threshold) {
+                gl_FragColor = vec4(0, 0, 1, 1);
+            } else {
+                gl_FragColor = vec4(0, 1, 0, 1);
+            }*/
+
+            gl_FragColor = vec4(texture2D(uVertexColors, vPixelPosition).rgb, 1);
 		}
         `;
 	}
@@ -216,6 +233,10 @@
                     verticesArray,
                     0
                 );
+                context.texParameteri(context.TEXTURE_2D, context.TEXTURE_MIN_FILTER, context.LINEAR);
+                context.texParameteri(context.TEXTURE_2D, context.TEXTURE_WRAP_S, context.CLAMP_TO_EDGE);
+                context.texParameteri(context.TEXTURE_2D, context.TEXTURE_WRAP_R, context.CLAMP_TO_EDGE);
+
                 const vertexColorsArray = new Float32Array(fixedVertexColors);
                 context.bindTexture(context.TEXTURE_2D, vertexColorsTexture);
                 context.texImage2D(
@@ -231,6 +252,9 @@
                     vertexColorsArray,
                     0
                 );
+                context.texParameteri(context.TEXTURE_2D, context.TEXTURE_MIN_FILTER, context.LINEAR);
+                context.texParameteri(context.TEXTURE_2D, context.TEXTURE_WRAP_S, context.CLAMP_TO_EDGE);
+                context.texParameteri(context.TEXTURE_2D, context.TEXTURE_WRAP_R, context.CLAMP_TO_EDGE);
 			}
 
 			// bind the textures to texture units
