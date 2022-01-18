@@ -182,6 +182,8 @@
 		fixedVertices: number[] = []; // x y x y
 		fixedVertexColors: number[] = []; // r g b a r g b a
         previousFrameTimestampMs: number = Date.now();
+verticesTexture: WebGLTexture;
+vertexColorsTexture: WebGLTexture;
 
 		constructor(context: WebGL2RenderingContext) {
 			this.context = context;
@@ -306,8 +308,8 @@
 			context.uniformMatrix4fv(uniformLocations.modelViewMatrix, false, modelViewMatrix);
 
 			// set textures - these contain our vertices and vertex colors
-			const verticesTexture = context.createTexture();
-			const vertexColorsTexture = context.createTexture();
+			this.verticesTexture = context.createTexture();
+			this.vertexColorsTexture = context.createTexture();
 			{
 				context.bindTexture(context.TEXTURE_2D, verticesTexture);
 				const verticesArray = new Uint8Array(this.fixedVertices);
@@ -377,8 +379,8 @@
             })
 
             // recreate textures
-			const verticesTexture = context.createTexture();
-			const vertexColorsTexture = context.createTexture();
+			const verticesTexture = this.verticesTexture;
+			const vertexColorsTexture = this.vertexColorsTexture;
 			{
 				context.bindTexture(context.TEXTURE_2D, verticesTexture);
 				const verticesArray = new Uint8Array(this.fixedVertices);
