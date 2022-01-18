@@ -4,7 +4,7 @@
 	import { onMount } from 'svelte';
 	import { mat4 } from 'gl-matrix';
 
-	const NUM_FIXED_POINTS = 10;
+	const NUM_FIXED_POINTS = 16;
     const NUM_SHOOTING_STARS = 0;
     const NUM_VERTICES = NUM_FIXED_POINTS + NUM_SHOOTING_STARS;
 
@@ -55,21 +55,18 @@
             }
 			gl_FragColor = vec4(nearestVertexColor, 1);*/
 
-            /*for (int i = 0; i < ${MAX_VERTICES}; i++) {
-                if (i >= uNumVertices) {
-                    break;
-                }
+            for (float i = 0.0; i < 1.0; i+=${1.0/NUM_VERTICES}) {
                 vec2 vertexPosition = texture2D(uVertices, vec2(i, 0)).xy;
-                vec4 vertexColor = texture2D(uVertexColors, vec2(i, 0));
+                vec3 vertexColor = texture2D(uVertexColors, vec2(i, 0)).rgb;
                 vec2 distance = vertexPosition - vPixelPosition;
                 sqDist = pow(distance.x, 2.0) + pow(distance.y, 2.0);
-                if (vPixelPosition.x > float(i*10) && vPixelPosition.x < float(i+1)*10.0) {
-                    gl_FragColor = vertexColor;
+                if (sqDist < 0.01) {
+                    gl_FragColor = vec4(vertexColor, 1);
                 }
-            };*/
+            };
 
-            // this one works
-            gl_FragColor = vec4(texture2D(uVertexColors, vec2(vPixelPosition.x, 0.5)).rgb, 1);
+            // this one works - shows vertical bars
+            //gl_FragColor = vec4(texture2D(uVertexColors, vec2(vPixelPosition.x, 0.5)).rgb, 1);
 		}
         `;
 	}
@@ -110,8 +107,11 @@
 			// initialize stationary points
 			for (let i = 0; i < NUM_FIXED_POINTS; i++) {
 				// generate x, y in [-1, 1] range
-				const x = Math.random() * 2 - 1;
-				const y = Math.random() * 2 - 1;
+				//const x = Math.random() * 2 - 1;
+				//const y = Math.random() * 2 - 1;
+                // generate x, y in [0, 255] range
+                const x = Math.random() * 255;
+                const y = Math.random() * 255;
 				const color = ColorTools.randomColor().rgb();
 				fixedVertices.push(x);
 				fixedVertices.push(y);
@@ -236,12 +236,12 @@
                     verticesArray,
                     0
                 );*/
-                const verticesArray = new Uint8Array([0.25, 0.25, 0.75, 0.75, 0, 0, 1, 1]);
+                const verticesArray = new Uint8Array(fixedVertices);
                 context.texImage2D(
                     context.TEXTURE_2D,
                     0,
                     context.RG8,
-                    4,
+                    NUM_VERTICES,
                     1,
                     0,
 					// must be this according to Table 2 @ https://www.khronos.org/registry/OpenGL-Refpages/es3.0/html/glTexImage2D.xhtml
