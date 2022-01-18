@@ -1,14 +1,16 @@
 <script lang="typescript">
 	import { hsv } from 'd3-hsv';
-	import { Color, rgb } from 'd3-color';
+	import { color, Color, rgb } from 'd3-color';
 	import { onMount } from 'svelte';
-	import { mat4 } from 'gl-matrix';
+	import { mat4, vec2 } from 'gl-matrix';
 
 	const NUM_FIXED_POINTS = 32;
 	const NUM_SHOOTING_STARS = 0;
 	const NUM_VERTICES = NUM_FIXED_POINTS + NUM_SHOOTING_STARS;
 
 	const MAX_VERTICES = 100;
+
+	const GOAL_FPS = 60;
 
 	class Shaders {
 		static vertexShaderSource = `
@@ -92,32 +94,116 @@
 		}
 	}
 
+	class ShootingStar {
+		// the index of the shooting star's x coordinate in this.fixedVertices
+		vertexIndex: number;
+		// the index of the shooting star's r value in this.fixedVertexColors
+		colorIndex: number;
+		spawn: vec2; // where the shooting star is spawned
+		destination: vec2; // where the shooting star despawns
+		speed: number;
+		game: Game;
+
+		constructor(game: Game) {
+			this.game = game;
+			// register color and position and load with fake data for now
+			this.colorIndex = game.fixedVertexColors.length;
+			game.fixedVertexColors.push(0);
+			game.fixedVertexColors.push(0);
+			game.fixedVertexColors.push(0);
+			game.fixedVertexColors.push(0);
+			this.vertexIndex = game.fixedVertices.length;
+			game.fixedVertices.push(0);
+			game.fixedVertices.push(0);
+			this.reset();
+		}
+
+		move(timeDeltaMs: number) {
+			const travelAngle = Math.atan(
+				(this.destination[1] - this.spawn[1]) / (this.destination[0] - this.spawn[0])
+			);
+			const travelAmount = (timeDeltaMs / 1000) * this.speed;
+			const dx = travelAmount * Math.cos(travelAngle);
+			const dy = travelAngle * Math.sin(travelAngle);
+			this.game.fixedVertices[this.vertexIndex + 0] += dx;
+			this.game.fixedVertices[this.vertexIndex + 1] += dy;
+			const x = this.game.fixedVertices[this.vertexIndex + 0];
+			const y = this.game.fixedVertices[this.vertexIndex + 1];
+			if (x < 0 || x > 255 || y < 0 || y > 255) {
+				this.reset();
+			}
+		}
+
+		reset() {
+			this.speed = Math.random() * 255;
+			// choose whether the star will travel vertically or horizontally
+			if (Math.random() < 0.5) {
+				// horizontally
+				const left = vec2.fromValues(0, Math.random() * 255);
+				const right = vec2.fromValues(255, Math.random() * 255);
+				// choose whether the star will travel left->right or right->left
+				if (Math.random() < 0.5) {
+					this.spawn = left;
+					this.destination = right;
+				} else {
+					this.spawn = right;
+					this.destination = left;
+				}
+			} else {
+				// vertically
+				const up = vec2.fromValues(Math.random() * 255, 0);
+				const down = vec2.fromValues(Math.random() * 255, 255);
+				// choose whether the star will travel up->down or down->up
+				if (Math.random() < 0.5) {
+					this.spawn = up;
+					this.destination = down;
+				} else {
+					this.spawn = down;
+					this.destination = up;
+				}
+			}
+			// determine star color
+			const color = ColorTools.randomShootingStarColor();
+			this.game.fixedVertexColors[this.colorIndex + 0] = color.r;
+			this.game.fixedVertexColors[this.colorIndex + 1] = color.g;
+			this.game.fixedVertexColors[this.colorIndex + 2] = color.b;
+			this.game.fixedVertexColors[this.colorIndex + 3] = color.a;
+			// set star position
+			this.game.fixedVertices[this.vertexIndex + 0] = this.spawn[0];
+			this.game.fixedVertices[this.vertexIndex + 1] = this.spawn[1];
+		}
+	}
+
 	class Game {
 		context: WebGL2RenderingContext;
+		shootingStars: ShootingStar[] = [];
+		fixedVertices: number[] = []; // x y x y
+		fixedVertexColors: number[] = []; // r g b a r g b a
+        previousFrameTimestampMs: number = Date.now();
 
 		constructor(context: WebGL2RenderingContext) {
 			this.context = context;
-			let fixedVertices: number[] = []; // x y x y x y
-			let fixedVertexColors: number[] = []; // r g b r g b r g b
 
 			// init canvas size
 			context.viewport(0, 0, context.canvas.width, context.canvas.height);
 
 			// initialize stationary points
 			for (let i = 0; i < NUM_FIXED_POINTS; i++) {
-				// generate x, y in [-1, 1] range
-				//const x = Math.random() * 2 - 1;
-				//const y = Math.random() * 2 - 1;
 				// generate x, y in [0, 255] range
 				const x = Math.random() * 255;
 				const y = Math.random() * 255;
 				const color = ColorTools.randomBackgroundColor().rgb();
-				fixedVertices.push(x);
-				fixedVertices.push(y);
-				fixedVertexColors.push(color.r);
-				fixedVertexColors.push(color.g);
-				fixedVertexColors.push(color.b);
-				fixedVertexColors.push(color.a);
+				this.fixedVertices.push(x);
+				this.fixedVertices.push(y);
+				this.fixedVertexColors.push(color.r);
+				this.fixedVertexColors.push(color.g);
+				this.fixedVertexColors.push(color.b);
+				this.fixedVertexColors.push(color.a);
+			}
+
+			// initialize shooting stars
+			for (let i = 0; i < NUM_SHOOTING_STARS; i++) {
+				const star = new ShootingStar(this);
 			}
 
 			// initialize shaders
@@ -221,21 +307,7 @@
 			const vertexColorsTexture = context.createTexture();
 			{
 				context.bindTexture(context.TEXTURE_2D, verticesTexture);
-				/*const verticesArray = new Float32Array(fixedVertices);
-                context.texImage2D(
-                    context.TEXTURE_2D,
-                    0,
-                    context.RG32F,
-                    NUM_VERTICES,
-                    1,
-                    0,
-					// must be this according to Table 2 @ https://www.khronos.org/registry/OpenGL-Refpages/es3.0/html/glTexImage2D.xhtml
-                    context.RG,
-                    context.FLOAT,
-                    verticesArray,
-                    0
-                );*/
-				const verticesArray = new Uint8Array(fixedVertices);
+				const verticesArray = new Uint8Array(this.fixedVertices);
 				context.texImage2D(
 					context.TEXTURE_2D,
 					0,
@@ -251,8 +323,7 @@
 				);
 				context.generateMipmap(context.TEXTURE_2D);
 
-				const vertexColorsArray = new Uint8Array(fixedVertexColors);
-				//const vertexColorsArray = new Uint8Array([0, 255, 0, 255, 0, 0, 255, 255, 255, 0, 0, 255]);
+				const vertexColorsArray = new Uint8Array(this.fixedVertexColors);
 				context.bindTexture(context.TEXTURE_2D, vertexColorsTexture);
 				context.texImage2D(
 					context.TEXTURE_2D,
@@ -266,22 +337,6 @@
 					context.UNSIGNED_BYTE,
 					vertexColorsArray
 				);
-				/*
-                const vertexColorsArray = new Float32Array(fixedVertexColors);
-                context.bindTexture(context.TEXTURE_2D, vertexColorsTexture);
-                context.texImage2D(
-                    context.TEXTURE_2D,
-                    0,
-                    context.RGB32F,
-                    NUM_VERTICES,
-                    1,
-                    0,
-					// must be this according to Table 2 @ https://www.khronos.org/registry/OpenGL-Refpages/es3.0/html/glTexImage2D.xhtml
-                    context.RGB,
-                    context.FLOAT,
-                    vertexColorsArray,
-                    0
-                );*/
 				context.generateMipmap(context.TEXTURE_2D);
 			}
 
@@ -300,13 +355,73 @@
 			{
 				const numVertices = 4; // four corners, defined earlier
 				context.bindBuffer(context.ARRAY_BUFFER, vertexBuffer);
-				context.drawArrays(context.TRIANGLE_STRIP, 0, 4);
+				context.drawArrays(context.TRIANGLE_STRIP, 0, numVertices);
 			}
 		}
 
 		loop() {
-			// todo run interpolation thread
-			// todo run rendering thread
+            const context = this.context;
+
+            // get frame time
+            const currentFrameTimestampMs = Date.now();
+			const timeElapsedMs = currentFrameTimestampMs - this.previousFrameTimestampMs;
+
+			// update star positions
+            this.shootingStars.forEach(star => {
+                star.move(timeElapsedMs);
+            })
+
+            // recreate textures
+			const verticesTexture = context.createTexture();
+			const vertexColorsTexture = context.createTexture();
+			{
+				context.bindTexture(context.TEXTURE_2D, verticesTexture);
+				const verticesArray = new Uint8Array(this.fixedVertices);
+				context.texImage2D(
+					context.TEXTURE_2D,
+					0,
+					context.RG8,
+					NUM_VERTICES,
+					1,
+					0,
+					// must be this according to Table 2 @ https://www.khronos.org/registry/OpenGL-Refpages/es3.0/html/glTexImage2D.xhtml
+					context.RG,
+					context.UNSIGNED_BYTE,
+					verticesArray,
+					0
+				);
+				context.generateMipmap(context.TEXTURE_2D);
+
+				const vertexColorsArray = new Uint8Array(this.fixedVertexColors);
+				context.bindTexture(context.TEXTURE_2D, vertexColorsTexture);
+				context.texImage2D(
+					context.TEXTURE_2D,
+					0,
+					context.RGBA,
+					NUM_VERTICES,
+					1,
+					0,
+					// must be this according to Table 2 @ https://www.khronos.org/registry/OpenGL-Refpages/es3.0/html/glTexImage2D.xhtml
+					context.RGBA,
+					context.UNSIGNED_BYTE,
+					vertexColorsArray
+				);
+				context.generateMipmap(context.TEXTURE_2D);
+			}
+
+			// bind the textures to texture units
+			context.activeTexture(context.TEXTURE0);
+			context.bindTexture(context.TEXTURE_2D, verticesTexture);
+			//context.uniform1i(uniformLocations.vertices, 0);
+			context.activeTexture(context.TEXTURE1);
+			context.bindTexture(context.TEXTURE_2D, vertexColorsTexture);
+			//context.uniform1i(uniformLocations.vertexColors, 1);
+
+            // draw
+            {
+				const numVertices = 4; // four corners, defined earlier
+				context.drawArrays(context.TRIANGLE_STRIP, 0, numVertices);
+			}
 		}
 	}
 
