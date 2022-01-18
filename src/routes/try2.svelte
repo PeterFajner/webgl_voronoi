@@ -4,9 +4,9 @@
 	import { onMount } from 'svelte';
 	import { mat4, vec2 } from 'gl-matrix';
 
-	const NUM_FIXED_POINTS = 32;
-	const NUM_SHOOTING_STARS = 0;
-	const NUM_VERTICES = NUM_FIXED_POINTS + NUM_SHOOTING_STARS;
+	const NUM_FIXED_POINTS = 63;
+	const NUM_SHOOTING_STARS = 1;
+	const NUM_VERTICES = NUM_FIXED_POINTS + NUM_SHOOTING_STARS; // should be power of 2
 
 	const MAX_VERTICES = 100;
 
@@ -130,12 +130,13 @@
 			const x = this.game.fixedVertices[this.vertexIndex + 0];
 			const y = this.game.fixedVertices[this.vertexIndex + 1];
 			if (x < 0 || x > 255 || y < 0 || y > 255) {
+                console.debug("star despawning at", x, y);
 				this.reset();
 			}
 		}
 
 		reset() {
-			this.speed = Math.random() * 255;
+			this.speed = 50;
 			// choose whether the star will travel vertically or horizontally
 			if (Math.random() < 0.5) {
 				// horizontally
@@ -163,7 +164,7 @@
 				}
 			}
 			// determine star color
-			const color = ColorTools.randomShootingStarColor();
+			const color = ColorTools.randomShootingStarColor().rgb();
 			this.game.fixedVertexColors[this.colorIndex + 0] = color.r;
 			this.game.fixedVertexColors[this.colorIndex + 1] = color.g;
 			this.game.fixedVertexColors[this.colorIndex + 2] = color.b;
@@ -171,6 +172,7 @@
 			// set star position
 			this.game.fixedVertices[this.vertexIndex + 0] = this.spawn[0];
 			this.game.fixedVertices[this.vertexIndex + 1] = this.spawn[1];
+            console.debug("star respawning at", this.spawn);
 		}
 	}
 
@@ -204,6 +206,7 @@
 			// initialize shooting stars
 			for (let i = 0; i < NUM_SHOOTING_STARS; i++) {
 				const star = new ShootingStar(this);
+                this.shootingStars.push(star);
 			}
 
 			// initialize shaders
@@ -365,6 +368,8 @@
             // get frame time
             const currentFrameTimestampMs = Date.now();
 			const timeElapsedMs = currentFrameTimestampMs - this.previousFrameTimestampMs;
+            this.previousFrameTimestampMs = currentFrameTimestampMs;
+			const fps = 1000 / timeElapsedMs;
 
 			// update star positions
             this.shootingStars.forEach(star => {
@@ -422,6 +427,8 @@
 				const numVertices = 4; // four corners, defined earlier
 				context.drawArrays(context.TRIANGLE_STRIP, 0, numVertices);
 			}
+
+            setTimeout(() => this.loop(), 1000/GOAL_FPS);
 		}
 	}
 
