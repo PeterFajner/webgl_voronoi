@@ -4,9 +4,9 @@
 	import { onMount } from 'svelte';
 	import { mat4 } from 'gl-matrix';
 
-	const NUM_FIXED_POINTS = 16;
-    const NUM_SHOOTING_STARS = 0;
-    const NUM_VERTICES = NUM_FIXED_POINTS + NUM_SHOOTING_STARS;
+	const NUM_FIXED_POINTS = 32;
+	const NUM_SHOOTING_STARS = 0;
+	const NUM_VERTICES = NUM_FIXED_POINTS + NUM_SHOOTING_STARS;
 
 	const MAX_VERTICES = 100;
 
@@ -37,33 +37,32 @@
 
 		void main() {
             // find the nearest vertex
-            float nearestVertexSqDist = -1.0;
             float sqDist;
-            vec3 nearestVertexColor = vec3(0, 1, 0);
-            /*for (int i = 0; i < ${MAX_VERTICES}; i++) {
-                if (i >= uNumVertices) {
-                    break;
-                }
-                vec2 vertexPosition = texture2D(uVertices, vec2(i, 0.5)).xy;
-                vec3 vertexColor = texture2D(uVertexColors, vec2(i, 0.5)).rgb;
-                vec2 distance = vertexPosition - vPixelPosition;
-                sqDist = pow(distance.x, 2.0) + pow(distance.y, 2.0);
-                if (nearestVertexSqDist < 0.0 || sqDist < nearestVertexSqDist) {
-                    nearestVertexSqDist = sqDist;
-                    nearestVertexColor = vertexColor;
-                }
-            }
-			gl_FragColor = vec4(nearestVertexColor, 1);*/
-
-            for (float i = 0.0; i < 1.0; i+=${1.0/NUM_VERTICES}) {
+            float closestSqDist = 100.0;
+            vec3 closestColor;
+            for (float i = 0.0; i < 1.0; i+=${1.0 / NUM_VERTICES}) {
                 vec2 vertexPosition = texture2D(uVertices, vec2(i, 0)).xy;
                 vec3 vertexColor = texture2D(uVertexColors, vec2(i, 0)).rgb;
                 vec2 distance = vertexPosition - vPixelPosition;
                 sqDist = pow(distance.x, 2.0) + pow(distance.y, 2.0);
-                if (sqDist < 0.01) {
+                if (sqDist < closestSqDist) {
+                    closestSqDist = sqDist;
+                    closestColor = vertexColor;
+                }
+            }
+            gl_FragColor = vec4(closestColor, 1);
+
+
+            // this one works too - shows bubbles
+            /*for (float i = 0.0; i < 1.0; i+=${1.0 / NUM_VERTICES}) {
+                vec2 vertexPosition = texture2D(uVertices, vec2(i, 0)).xy;
+                vec3 vertexColor = texture2D(uVertexColors, vec2(i, 0)).rgb;
+                vec2 distance = vertexPosition - vPixelPosition;
+                sqDist = pow(distance.x, 2.0) + pow(distance.y, 2.0);
+                if (sqDist < 0.001) {
                     gl_FragColor = vec4(vertexColor, 1);
                 }
-            };
+            }*/
 
             // this one works - shows vertical bars
             //gl_FragColor = vec4(texture2D(uVertexColors, vec2(vPixelPosition.x, 0.5)).rgb, 1);
@@ -72,9 +71,9 @@
 	}
 
 	class ColorTools {
-        static randomColor(): Color {
-            return rgb(Math.random() * 255, Math.random() * 255, Math.random() * 255);
-        }
+		static randomColor(): Color {
+			return rgb(Math.random() * 255, Math.random() * 255, Math.random() * 255);
+		}
 
 		static randomBackgroundColor(): Color {
 			const h = Math.random() * 90;
@@ -98,8 +97,8 @@
 
 		constructor(context: WebGL2RenderingContext) {
 			this.context = context;
-            let fixedVertices: number[] = []; // x y x y x y
-            let fixedVertexColors: number[] = []; // r g b r g b r g b
+			let fixedVertices: number[] = []; // x y x y x y
+			let fixedVertexColors: number[] = []; // r g b r g b r g b
 
 			// init canvas size
 			context.viewport(0, 0, context.canvas.width, context.canvas.height);
@@ -109,10 +108,10 @@
 				// generate x, y in [-1, 1] range
 				//const x = Math.random() * 2 - 1;
 				//const y = Math.random() * 2 - 1;
-                // generate x, y in [0, 255] range
-                const x = Math.random() * 255;
-                const y = Math.random() * 255;
-				const color = ColorTools.randomColor().rgb();
+				// generate x, y in [0, 255] range
+				const x = Math.random() * 255;
+				const y = Math.random() * 255;
+				const color = ColorTools.randomBackgroundColor().rgb();
 				fixedVertices.push(x);
 				fixedVertices.push(y);
 				fixedVertexColors.push(color.r);
@@ -155,14 +154,14 @@
 				projectionMatrix: context.getUniformLocation(shaderProgram, 'uProjectionMatrix'),
 				modelViewMatrix: context.getUniformLocation(shaderProgram, 'uModelViewMatrix'),
 				vertices: context.getUniformLocation(shaderProgram, 'uVertices'),
-                vertexColors: context.getUniformLocation(shaderProgram, 'uVertexColors'),
-                numVertices: context.getUniformLocation(shaderProgram, 'uNumVertices'),
+				vertexColors: context.getUniformLocation(shaderProgram, 'uVertexColors'),
+				numVertices: context.getUniformLocation(shaderProgram, 'uNumVertices')
 			};
 
 			// init buffers
 			const vertexBuffer = context.createBuffer();
 			{
-				const fourCorners = [-1, -1, 1, -1, -1, 1, 1, 1];
+				const fourCorners = [0, 0, 1, 0, 0, 1, 1, 1];
 				context.bindBuffer(context.ARRAY_BUFFER, vertexBuffer);
 				context.bufferData(
 					context.ARRAY_BUFFER,
@@ -208,7 +207,7 @@
 
 			// create a matrix to store the current drawing position
 			const modelViewMatrix = mat4.create();
-			mat4.translate(modelViewMatrix, modelViewMatrix, [-0.0, 0.0, -2.8]);
+			mat4.translate(modelViewMatrix, modelViewMatrix, [-0.5, -0.5, -1]);
 
 			// select drawing program
 			context.useProgram(shaderProgram);
@@ -218,11 +217,11 @@
 			context.uniformMatrix4fv(uniformLocations.modelViewMatrix, false, modelViewMatrix);
 
 			// set textures - these contain our vertices and vertex colors
-            const verticesTexture = context.createTexture();
-            const vertexColorsTexture = context.createTexture();
+			const verticesTexture = context.createTexture();
+			const vertexColorsTexture = context.createTexture();
 			{
-                context.bindTexture(context.TEXTURE_2D, verticesTexture);
-                /*const verticesArray = new Float32Array(fixedVertices);
+				context.bindTexture(context.TEXTURE_2D, verticesTexture);
+				/*const verticesArray = new Float32Array(fixedVertices);
                 context.texImage2D(
                     context.TEXTURE_2D,
                     0,
@@ -236,38 +235,38 @@
                     verticesArray,
                     0
                 );*/
-                const verticesArray = new Uint8Array(fixedVertices);
-                context.texImage2D(
-                    context.TEXTURE_2D,
-                    0,
-                    context.RG8,
-                    NUM_VERTICES,
-                    1,
-                    0,
+				const verticesArray = new Uint8Array(fixedVertices);
+				context.texImage2D(
+					context.TEXTURE_2D,
+					0,
+					context.RG8,
+					NUM_VERTICES,
+					1,
+					0,
 					// must be this according to Table 2 @ https://www.khronos.org/registry/OpenGL-Refpages/es3.0/html/glTexImage2D.xhtml
-                    context.RG,
-                    context.UNSIGNED_BYTE,
-                    verticesArray,
-                    0
-                );
-                context.generateMipmap(context.TEXTURE_2D);
+					context.RG,
+					context.UNSIGNED_BYTE,
+					verticesArray,
+					0
+				);
+				context.generateMipmap(context.TEXTURE_2D);
 
-                const vertexColorsArray = new Uint8Array(fixedVertexColors);
-                //const vertexColorsArray = new Uint8Array([0, 255, 0, 255, 0, 0, 255, 255, 255, 0, 0, 255]);
-                context.bindTexture(context.TEXTURE_2D, vertexColorsTexture);
-                context.texImage2D(
-                    context.TEXTURE_2D,
-                    0,
-                    context.RGBA,
-                    NUM_VERTICES,
-                    1,
-                    0,
+				const vertexColorsArray = new Uint8Array(fixedVertexColors);
+				//const vertexColorsArray = new Uint8Array([0, 255, 0, 255, 0, 0, 255, 255, 255, 0, 0, 255]);
+				context.bindTexture(context.TEXTURE_2D, vertexColorsTexture);
+				context.texImage2D(
+					context.TEXTURE_2D,
+					0,
+					context.RGBA,
+					NUM_VERTICES,
+					1,
+					0,
 					// must be this according to Table 2 @ https://www.khronos.org/registry/OpenGL-Refpages/es3.0/html/glTexImage2D.xhtml
-                    context.RGBA,
-                    context.UNSIGNED_BYTE,
-                    vertexColorsArray,
-                );
-                /*
+					context.RGBA,
+					context.UNSIGNED_BYTE,
+					vertexColorsArray
+				);
+				/*
                 const vertexColorsArray = new Float32Array(fixedVertexColors);
                 context.bindTexture(context.TEXTURE_2D, vertexColorsTexture);
                 context.texImage2D(
@@ -283,16 +282,15 @@
                     vertexColorsArray,
                     0
                 );*/
-                context.generateMipmap(context.TEXTURE_2D);
-                
+				context.generateMipmap(context.TEXTURE_2D);
 			}
 
 			// bind the textures to texture units
 			context.activeTexture(context.TEXTURE0);
 			context.bindTexture(context.TEXTURE_2D, verticesTexture);
 			context.uniform1i(uniformLocations.vertices, 0);
-            context.activeTexture(context.TEXTURE1);
-            context.bindTexture(context.TEXTURE_2D, vertexColorsTexture);
+			context.activeTexture(context.TEXTURE1);
+			context.bindTexture(context.TEXTURE_2D, vertexColorsTexture);
 			context.uniform1i(uniformLocations.vertexColors, 1);
 
 			// set number of vertices
