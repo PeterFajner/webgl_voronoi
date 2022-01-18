@@ -1,6 +1,6 @@
 <script lang="typescript">
 	import { hsv } from 'd3-hsv';
-	import type { Color, rgb } from 'd3-color';
+	import { Color, rgb } from 'd3-color';
 	import { onMount } from 'svelte';
 	import { mat4 } from 'gl-matrix';
 
@@ -40,7 +40,7 @@
             float nearestVertexSqDist = -1.0;
             float sqDist;
             vec3 nearestVertexColor = vec3(0, 1, 0);
-            for (int i = 0; i < ${MAX_VERTICES}; i++) {
+            /*for (int i = 0; i < ${MAX_VERTICES}; i++) {
                 if (i >= uNumVertices) {
                     break;
                 }
@@ -53,30 +53,32 @@
                     nearestVertexColor = vertexColor;
                 }
             }
-			gl_FragColor = vec4(nearestVertexColor, 1);
+			gl_FragColor = vec4(nearestVertexColor, 1);*/
 
-            // testing
-            /*if (sqDist < 0.2) {
-                gl_FragColor = vec4(0, 0, 1, 1);
-            } else {
-                gl_FragColor = vec4(0, 1, 0, 1);
-            }*/
-            //gl_FragColor = vec4(0, vPixelPosition, 1);
+            /*for (int i = 0; i < ${MAX_VERTICES}; i++) {
+                if (i >= uNumVertices) {
+                    break;
+                }
+                vec2 vertexPosition = texture2D(uVertices, vec2(i, 0)).xy;
+                vec4 vertexColor = texture2D(uVertexColors, vec2(i, 0));
+                vec2 distance = vertexPosition - vPixelPosition;
+                sqDist = pow(distance.x, 2.0) + pow(distance.y, 2.0);
+                if (vPixelPosition.x > float(i*10) && vPixelPosition.x < float(i+1)*10.0) {
+                    gl_FragColor = vertexColor;
+                }
+            };*/
 
-            /*vec2 vertexPosition = texture2D(uVertices, vec2(3, 0)).xy;
-            float threshold = 0.01;
-            if (abs(vPixelPosition.x - vertexPosition.x) < threshold && abs(vPixelPosition.y - vertexPosition.y) < threshold) {
-                gl_FragColor = vec4(0, 0, 1, 1);
-            } else {
-                gl_FragColor = vec4(0, 1, 0, 1);
-            }*/
-
-            gl_FragColor = vec4(texture2D(uVertexColors, vPixelPosition).rgb, 1);
+            // this one works
+            gl_FragColor = vec4(texture2D(uVertexColors, vec2(vPixelPosition.x, 0.5)).rgb, 1);
 		}
         `;
 	}
 
 	class ColorTools {
+        static randomColor(): Color {
+            return rgb(Math.random() * 255, Math.random() * 255, Math.random() * 255);
+        }
+
 		static randomBackgroundColor(): Color {
 			const h = Math.random() * 90;
 			const s = Math.random() * 0.2 + 0.2;
@@ -110,12 +112,13 @@
 				// generate x, y in [-1, 1] range
 				const x = Math.random() * 2 - 1;
 				const y = Math.random() * 2 - 1;
-				const color = ColorTools.randomBackgroundColor().rgb();
+				const color = ColorTools.randomColor().rgb();
 				fixedVertices.push(x);
 				fixedVertices.push(y);
-				fixedVertexColors.push(color.r/255);
-				fixedVertexColors.push(color.g/255);
-				fixedVertexColors.push(color.b/255);
+				fixedVertexColors.push(color.r);
+				fixedVertexColors.push(color.g);
+				fixedVertexColors.push(color.b);
+				fixedVertexColors.push(color.a);
 			}
 
 			// initialize shaders
@@ -218,8 +221,8 @@
             const verticesTexture = context.createTexture();
             const vertexColorsTexture = context.createTexture();
 			{
-                const verticesArray = new Float32Array(fixedVertices);
                 context.bindTexture(context.TEXTURE_2D, verticesTexture);
+                /*const verticesArray = new Float32Array(fixedVertices);
                 context.texImage2D(
                     context.TEXTURE_2D,
                     0,
@@ -232,11 +235,39 @@
                     context.FLOAT,
                     verticesArray,
                     0
+                );*/
+                const verticesArray = new Uint8Array([0.25, 0.25, 0.75, 0.75, 0, 0, 1, 1]);
+                context.texImage2D(
+                    context.TEXTURE_2D,
+                    0,
+                    context.RG8,
+                    4,
+                    1,
+                    0,
+					// must be this according to Table 2 @ https://www.khronos.org/registry/OpenGL-Refpages/es3.0/html/glTexImage2D.xhtml
+                    context.RG,
+                    context.UNSIGNED_BYTE,
+                    verticesArray,
+                    0
                 );
-                context.texParameteri(context.TEXTURE_2D, context.TEXTURE_MIN_FILTER, context.LINEAR);
-                context.texParameteri(context.TEXTURE_2D, context.TEXTURE_WRAP_S, context.CLAMP_TO_EDGE);
-                context.texParameteri(context.TEXTURE_2D, context.TEXTURE_WRAP_R, context.CLAMP_TO_EDGE);
+                context.generateMipmap(context.TEXTURE_2D);
 
+                const vertexColorsArray = new Uint8Array(fixedVertexColors);
+                //const vertexColorsArray = new Uint8Array([0, 255, 0, 255, 0, 0, 255, 255, 255, 0, 0, 255]);
+                context.bindTexture(context.TEXTURE_2D, vertexColorsTexture);
+                context.texImage2D(
+                    context.TEXTURE_2D,
+                    0,
+                    context.RGBA,
+                    NUM_VERTICES,
+                    1,
+                    0,
+					// must be this according to Table 2 @ https://www.khronos.org/registry/OpenGL-Refpages/es3.0/html/glTexImage2D.xhtml
+                    context.RGBA,
+                    context.UNSIGNED_BYTE,
+                    vertexColorsArray,
+                );
+                /*
                 const vertexColorsArray = new Float32Array(fixedVertexColors);
                 context.bindTexture(context.TEXTURE_2D, vertexColorsTexture);
                 context.texImage2D(
@@ -251,10 +282,9 @@
                     context.FLOAT,
                     vertexColorsArray,
                     0
-                );
-                context.texParameteri(context.TEXTURE_2D, context.TEXTURE_MIN_FILTER, context.LINEAR);
-                context.texParameteri(context.TEXTURE_2D, context.TEXTURE_WRAP_S, context.CLAMP_TO_EDGE);
-                context.texParameteri(context.TEXTURE_2D, context.TEXTURE_WRAP_R, context.CLAMP_TO_EDGE);
+                );*/
+                context.generateMipmap(context.TEXTURE_2D);
+                
 			}
 
 			// bind the textures to texture units
